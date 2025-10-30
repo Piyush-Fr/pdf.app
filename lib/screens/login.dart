@@ -36,7 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 400),
           child: Card(
-            color: Colors.white.withOpacity(0.06),
+            color: Colors.white.withAlpha((0.06 * 255).round()),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),

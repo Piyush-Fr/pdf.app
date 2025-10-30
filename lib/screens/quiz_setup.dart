@@ -1,10 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../utils/error_handler.dart';
+import '../config/app_config.dart';
 
 class QuizSetupScreen extends StatefulWidget {
   const QuizSetupScreen({super.key});
@@ -14,11 +16,10 @@ class QuizSetupScreen extends StatefulWidget {
 }
 
 class _QuizSetupScreenState extends State<QuizSetupScreen> {
-  static const String _geminiApiKey = 'AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo';
   final TextEditingController _contextController = TextEditingController();
   bool _loading = false;
   String? _fileName;
-  Uint8List? _pdfBytes;
+  List<int>? _pdfBytes;
 
   @override
   void dispose() {
@@ -36,32 +37,41 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       );
       if (result == null || result.files.isEmpty) return;
       final picked = result.files.first;
+      
+      if (picked.bytes == null) {
+        throw Exception('Failed to read selected file');
+      }
+      
+      // Validate file size (50MB max)
+      if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
+        throw Exception('File size must not exceed 50MB');
+      }
+      
       setState(() {
         _fileName = picked.name;
         _pdfBytes = picked.bytes;
       });
-      if (_pdfBytes == null) {
-        throw Exception('Failed to read selected file');
-      }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      ErrorHandler.showError(
         context,
-      ).showSnackBar(SnackBar(content: Text('PDF selection failed: $e')));
+        'PDF selection failed',
+        details: ErrorHandler.formatErrorMessage(e),
+      );
     }
   }
 
   Future<Map<String, dynamic>> _generateQuiz(
-    Uint8List pdfBytes,
+    List<int> pdfBytes,
     String contextText,
   ) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final systemPrompt =
         'You are a strict quiz generator. Return ONLY valid JSON.';
     final userPrompt =
-        'Create a minimum of 10 multiple-choice questions (prefer more if possible) based on the attached PDF and this context: "${contextText}". Do NOT stop at fewer than 10.'
+        'Create a minimum of 10 multiple-choice questions (prefer more if possible) based on the attached PDF and this context: "$contextText". Do NOT stop at fewer than 10.'
         '\nEach question and option MUST be concise.'
         '\nReturn ONLY pure JSON in this format: '
         '{"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": number 0-3}]}'
@@ -112,24 +122,22 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       body,
     );
 
-    assert(() {
-      print('Raw Gemini quiz API response: ${resp.body}');
-      return true;
-    }());
+    if (kDebugMode) {
+      debugPrint('Raw Gemini quiz API response: ${resp.body}');
+    }
 
     if (resp.statusCode != 200) {
       throw Exception('Gemini error ${resp.statusCode}: ${resp.body}');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    assert(() {
+    if (kDebugMode) {
       try {
         final cands = data['candidates'] as List?;
         final first = (cands != null && cands.isNotEmpty) ? cands.first as Map<String, dynamic> : null;
         final finishReason = first != null ? first['finishReason'] : null;
-        print('Quiz finishReason: $finishReason');
+        debugPrint('Quiz finishReason: $finishReason');
       } catch (_) {}
-      return true;
-    }());
+    }
     final candidates = data['candidates'] as List<dynamic>?;
     if (candidates == null || candidates.isEmpty) {
       throw Exception('No quiz produced');
@@ -147,10 +155,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     }
     final text = buffer.toString().trim();
 
-    assert(() {
-      print('Extracted model output for quiz parsing: $text');
-      return true;
-    }());
+    if (kDebugMode) {
+      debugPrint('Extracted model output for quiz parsing: $text');
+    }
 
     if (text.isEmpty) {
       final retry = await _retryContextOnly(contextText, prevFail: true);
@@ -169,22 +176,21 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       return parsed;
     } catch (e) {
       // Show partial output in error snackbar, debug print for diagnosis
-      assert(() {
-        print('Quiz JSON parse error! Raw model text: $text');
-        print('Parse exception: $e');
-        return true;
-      }());
+      if (kDebugMode) {
+        debugPrint('Quiz JSON parse error! Raw model text: $text');
+        debugPrint('Parse exception: $e');
+      }
       throw FormatException('Failed to parse quiz JSON.\nModel output: $text');
     }
   }
 
   Future<String?> _retryContextOnly(String contextText, {bool prevFail = false}) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final prompt = prevFail
-        ? 'Last time you did NOT return valid JSON. This time, RETURN ONLY MACHINE-READABLE JSON. No markdown, code fences, commentary. Format: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: ${contextText}'
-        : 'Create a minimum of 10 MCQs from this context only (no PDF available). Do NOT stop at fewer than 10. Use STRICT JSON. Return pure JSON: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: ${contextText}';
+        ? 'Last time you did NOT return valid JSON. This time, RETURN ONLY MACHINE-READABLE JSON. No markdown, code fences, commentary. Format: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: $contextText'
+        : 'Create a minimum of 10 MCQs from this context only (no PDF available). Do NOT stop at fewer than 10. Use STRICT JSON. Return pure JSON: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: $contextText';
     final body = {
       'system_instruction': {
         'role': 'system',
@@ -222,10 +228,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       uri,
       body,
     );
-    assert(() {
-      print('Raw Gemini retry response: ${resp.body}');
-      return true;
-    }());
+    if (kDebugMode) {
+      debugPrint('Raw Gemini retry response: ${resp.body}');
+    }
     if (resp.statusCode != 200) return null;
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     final candidates = data['candidates'] as List<dynamic>?;
@@ -274,16 +279,14 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         }
         if (!overloaded) return resp;
         lastResp = resp;
-        assert(() {
-          print('Gemini overloaded (attempt $attempt/${maxAttempts}). Retrying in ${delay.inSeconds}s...');
-          return true;
-        }());
+        if (kDebugMode) {
+          debugPrint('Gemini overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...');
+        }
       } catch (e) {
         // Network or transient error, retry
-        assert(() {
-          print('Gemini HTTP error on attempt $attempt: $e');
-          return true;
-        }());
+        if (kDebugMode) {
+          debugPrint('Gemini HTTP error on attempt $attempt: $e');
+        }
       }
       await Future.delayed(delay);
       delay *= 2;
@@ -359,7 +362,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     final accent = Theme.of(context).colorScheme.primary;
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null && _pdfBytes == null) {
-      _pdfBytes = args['pdfBytes'] as Uint8List?;
+      _pdfBytes = args['pdfBytes'] as List<int>?;
       _fileName = args['pdfFilename'] as String?;
     }
     return SafeArea(
@@ -367,7 +370,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
           child: Card(
-            color: Colors.white.withOpacity(0.06),
+            color: Colors.white.withAlpha((0.06 * 255).round()),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
@@ -409,32 +412,53 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Expanded(
+                          Expanded(
                         child: FilledButton.icon(
                           onPressed: (!_loading && _pdfBytes != null)
                               ? () async {
+                                  // Validate context input
+                                  final contextText = _contextController.text.trim();
+                                  final validation = ErrorHandler.validateInput(
+                                    contextText,
+                                    fieldName: 'Context',
+                                    minLength: 0,
+                                    maxLength: 1000,
+                                    required: false,
+                                  );
+                                  
+                                  if (validation != null) {
+                                    ErrorHandler.showError(context, validation);
+                                    return;
+                                  }
+                                  
                                   setState(() => _loading = true);
                                   try {
                                     final quiz = await _generateQuiz(
                                       _pdfBytes!,
-                                      _contextController.text.trim(),
+                                      contextText,
                                     );
                                     if (!mounted) return;
-                                    Navigator.of(
-                                      context,
-                                    ).pushNamed('/quiz', arguments: quiz);
+                                    // ignore: use_build_context_synchronously
+                                    final navigator = Navigator.of(context);
+                                    navigator.pushNamed('/quiz', arguments: quiz);
+                                  } on TimeoutException {
+                                    if (!mounted) return;
+                                    ErrorHandler.showError(
+                                      context, // ignore: use_build_context_synchronously
+                                      'Quiz generation timed out',
+                                      details: 'The request took too long. Please try again.',
+                                    );
                                   } catch (e) {
                                     if (!mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Quiz generation failed: $e',
-                                        ),
-                                      ),
+                                    ErrorHandler.showError(
+                                      context, // ignore: use_build_context_synchronously
+                                      'Quiz generation failed',
+                                      details: ErrorHandler.formatErrorMessage(e),
                                     );
                                   } finally {
-                                    if (mounted)
+                                    if (mounted) {
                                       setState(() => _loading = false);
+                                    }
                                   }
                                 }
                               : null,

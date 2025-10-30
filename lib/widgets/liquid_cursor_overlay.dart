@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 
@@ -79,19 +78,19 @@ class _LiquidOrb extends StatelessWidget {
         refractStrength: -0.12,
         blurRadiusPx: 3.0,
         specStrength: 1.0,
-        lightbandColor: Colors.white.withOpacity(0.9),
+        lightbandColor: Colors.white.withAlpha((0.9 * 255).round()),
       ),
       child: OCLiquidGlass(
         width: 28,
         height: 28,
         borderRadius: 14,
-        color: color.withOpacity(0.25),
+        color: color.withAlpha((0.25 * 255).round()),
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: color.withOpacity(0.55),
+                color: color.withAlpha((0.55 * 255).round()),
                 blurRadius: 22,
                 spreadRadius: 2,
               ),

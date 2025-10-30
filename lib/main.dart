@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/app_config.dart';
 import 'screens/dashboard.dart';
 import 'screens/study.dart';
 import 'screens/login.dart';
@@ -10,15 +11,42 @@ import 'screens/quiz_setup.dart';
 import 'screens/quiz_screen.dart';
 import 'screens/pdf_reader.dart';
 import 'screens/flow_state.dart';
+import 'screens/benchmark_screen.dart';
 import 'widgets/liquid_cursor_overlay.dart';
 
 Future<void> main() async {
+  // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
-  await Supabase.initialize(
-    url: 'https://lxmyznmgbvbxzjwvbfnr.supabase.co/',
-    anonKey:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4bXl6bm1nYnZieHpqd3ZiZm5yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2MjQ4OTAsImV4cCI6MjA3NjIwMDg5MH0.CQ3VvR0khlJfd2vrqJwX2jL_FXgLQ5rQoo33QGPQUfg',
-  );
+  
+  // Load environment variables from .env file
+  try {
+    await AppConfig.load();
+    debugPrint('✓ Environment variables loaded successfully');
+  } catch (e) {
+    debugPrint('✗ Failed to load environment variables: $e');
+    debugPrint('Please ensure .env file exists (copy from .env.example)');
+    // Continue anyway - will show error when trying to use missing keys
+  }
+  
+  // Initialize Supabase with error handling
+  try {
+    await Supabase.initialize(
+      url: AppConfig.supabaseUrl,
+      anonKey: AppConfig.supabaseAnonKey,
+    );
+    debugPrint('✓ Supabase initialized successfully');
+  } catch (e) {
+    // Log error and continue - the app will show login screen
+    debugPrint('✗ Supabase initialization error: $e');
+  }
+  
+  // Set up global error handler for uncaught errors
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('Flutter error: ${details.exception}');
+    debugPrint('Stack trace: ${details.stack}');
+  };
+  
   runApp(const MyApp());
 }
 
@@ -33,16 +61,14 @@ class MyApp extends StatelessWidget {
   ); // Electric blue
 
   ThemeData _buildTheme() {
-    final base = ThemeData.dark();
-    return base.copyWith(
-      colorScheme: base.colorScheme.copyWith(
+    return ThemeData.dark(useMaterial3: true).copyWith(
+      colorScheme: ColorScheme.dark(
         primary: accent,
         secondary: accent,
       ),
       scaffoldBackgroundColor: const Color(0xFF0A0E12),
-      splashColor: accent.withOpacity(0.15),
+      splashColor: accent.withAlpha((0.15 * 255).round()),
       highlightColor: Colors.transparent,
-      useMaterial3: true,
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(foregroundColor: accent),
       ),
@@ -61,24 +87,93 @@ class MyApp extends StatelessWidget {
         '/summarizer': (_) => const _LiquidBackplate(child: SummarizerScreen()),
         '/quizSetup': (_) => const _LiquidBackplate(child: QuizSetupScreen()),
         '/quiz': (ctx) {
-          final args =
-              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>;
+          final args = ModalRoute.of(ctx)?.settings.arguments;
+          if (args == null || args is! Map<String, dynamic>) {
+            return _LiquidBackplate(
+              child: Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const SizedBox(height: 16),
+                      const Text('Invalid quiz data'),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Go Back'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
           return _LiquidBackplate(child: QuizScreen(quiz: args));
         },
         '/flow': (ctx) {
           final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
           final bytes = args?['pdfBytes'] as Uint8List?;
           final name = args?['pdfFilename'] as String?;
+          
+          if (bytes == null) {
+            return _LiquidBackplate(
+              child: Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const SizedBox(height: 16),
+                      const Text('PDF data is missing'),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Go Back'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+          
           return _LiquidBackplate(
-            child: FlowStateScreen(pdfBytes: bytes!, filename: name),
+            child: FlowStateScreen(pdfBytes: bytes, filename: name),
           );
         },
+        '/benchmark': (ctx) => _LiquidBackplate(
+          child: const BenchmarkScreen(),
+        ),
         '/pdf': (ctx) {
           final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
           final bytes = args?['pdfBytes'] as Uint8List?;
           final name = args?['pdfFilename'] as String?;
+          
+          if (bytes == null) {
+            return _LiquidBackplate(
+              child: Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const SizedBox(height: 16),
+                      const Text('PDF data is missing'),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Go Back'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+          
           return _LiquidBackplate(
-            child: PdfReaderScreen(bytes: bytes!, filename: name),
+            child: PdfReaderScreen(bytes: bytes, filename: name),
           );
         },
       },
@@ -236,8 +331,8 @@ class _GrainPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
-    final light = Paint()..color = Colors.white.withOpacity(0.035);
-    final dark = Paint()..color = Colors.black.withOpacity(0.025);
+    final light = Paint()..color = Colors.white.withAlpha((0.035 * 255).round());
+    final dark = Paint()..color = Colors.black.withAlpha((0.025 * 255).round());
     for (var i = 0; i < points.length; i++) {
       final p = points[i];
       final r = sizes[i];

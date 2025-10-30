@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../utils/error_handler.dart';
+import '../config/app_config.dart';
 
 class FlowStateScreen extends StatefulWidget {
   const FlowStateScreen({super.key, required this.pdfBytes, this.filename});
@@ -14,7 +17,6 @@ class FlowStateScreen extends StatefulWidget {
 }
 
 class _FlowStateScreenState extends State<FlowStateScreen> {
-  static const String _geminiApiKey = 'AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo';
   Map<String, dynamic>? _graph;
   bool _loading = false;
   String? _error;
@@ -29,16 +31,27 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
 
   Future<void> _generateGraph(String contextText) async {
     try {
+      // Validate input
+      final validation = ErrorHandler.validateInput(
+        contextText,
+        fieldName: 'Context',
+        minLength: 3,
+        maxLength: 500,
+      );
+      
+      if (validation != null) {
+        throw Exception(validation);
+      }
+      
       final uri = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
       );
       final prompt =
           'Analyze the attached PDF and produce a concise flow diagram for the requested context.\n'
               'OUTPUT FORMAT (STRICT): Provide ONLY a JSON object wrapped in <json>...</json> tags, no commentary.\n'
               '{"nodes": [{"id": string, "label": string}], "edges": [{"from": string, "to": string}]}\n'
               'Rules: 6–12 nodes, labels <= 5 words.\n'
-              'Context: ' +
-          contextText;
+              'Context: $contextText';
       final body = {
         'system_instruction': {
           'role': 'system',
@@ -69,13 +82,21 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
           'response_mime_type': 'text/plain',
         },
       };
-      final resp = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
+      
+      // Add timeout
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(
+            const Duration(seconds: 90),
+            onTimeout: () => throw TimeoutException('Flow generation timed out'),
+          );
+          
       if (resp.statusCode != 200) {
-        throw Exception('HTTP ${resp.statusCode}');
+        throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
       }
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final candidates = data['candidates'] as List<dynamic>?;
@@ -103,9 +124,14 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
         _graph = graph;
         _loading = false;
       });
+    } on TimeoutException catch (e) {
+      setState(() {
+        _error = 'Timeout: ${e.toString()}';
+        _loading = false;
+      });
     } catch (e) {
       setState(() {
-        _error = e.toString();
+        _error = ErrorHandler.formatErrorMessage(e);
         _loading = false;
       });
     }
@@ -113,12 +139,11 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
 
   Future<String?> _retryLinear(String contextText) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final prompt =
         'Read the attached PDF and output a single line that describes the main flow using arrows, like: A -> B -> C -> D. '
-            'No commentary, no code fences, just that one line. Context: ' +
-        contextText;
+            'No commentary, no code fences, just that one line. Context: $contextText';
     final body = {
       'contents': [
         {
@@ -193,13 +218,12 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
 
   Future<String?> _retryBullets(String contextText) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final prompt =
         'From the attached PDF, list 6-12 key steps as a simple bullet list.\n'
             'One step per line, no numbering, no commentary. Keep each step <= 6 words.\n'
-            'Context: ' +
-        contextText;
+            'Context: $contextText';
     final body = {
       'contents': [
         {
@@ -408,15 +432,14 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
 
   Future<String?> _generateAscii(String contextText) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final prompt =
         'Create a clear ASCII flowchart for the attached PDF and context below.\n'
             'Use ONLY plain ASCII characters: +-|/\\, arrows like ->, labels, and boxes.\n'
             'Keep width <= 70 chars; multiline boxes allowed; include simple branching labels (Yes/No) if relevant.\n'
             'No code fences, no commentary. Output the flowchart only.\n'
-            'Context: ' +
-        contextText;
+            'Context: $contextText';
     final body = {
       'contents': [
         {
@@ -546,7 +569,7 @@ class _FlowPainter extends CustomPainter {
       ..strokeWidth = 1.2;
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
     final connectorPaint = Paint()
-      ..color = Colors.white.withOpacity(0.6)
+      ..color = Colors.white.withAlpha((0.6 * 255).round())
       ..strokeWidth = 1.5;
 
     // Draw left vertical spine
@@ -604,9 +627,9 @@ class _AsciiView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: Colors.white.withAlpha((0.06 * 255).round()),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.15)),
+        border: Border.all(color: Colors.white.withAlpha((0.15 * 255).round())),
       ),
       child: Scrollbar(
         thumbVisibility: true,

@@ -1,11 +1,13 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_markdown/flutter_markdown.dart';
+import '../utils/error_handler.dart';
+import '../config/app_config.dart';
 
 class SummarizerScreen extends StatefulWidget {
   const SummarizerScreen({super.key});
@@ -15,7 +17,6 @@ class SummarizerScreen extends StatefulWidget {
 }
 
 class _SummarizerScreenState extends State<SummarizerScreen> {
-  static const String _geminiApiKey = 'AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo';
   bool _loading = false;
   String? _summary;
   String? _fileName;
@@ -49,15 +50,13 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
         }
         if (!overloaded) return resp;
         lastResp = resp;
-        assert(() {
-          print('Gemini summarizer overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...');
-          return true;
-        }());
+        if (kDebugMode) {
+          debugPrint('Gemini summarizer overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...');
+        }
       } catch (e) {
-        assert(() {
-          print('Gemini summarizer HTTP error on attempt $attempt: $e');
-          return true;
-        }());
+        if (kDebugMode) {
+          debugPrint('Gemini summarizer HTTP error on attempt $attempt: $e');
+        }
       }
       await Future.delayed(delay);
       delay = Duration(seconds: (delay.inSeconds * 2).clamp(2, 32));
@@ -85,25 +84,40 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
       final picked = result.files.first;
       _fileName = picked.name;
       final bytes = picked.bytes;
+      
       if (bytes == null) {
         throw Exception('Failed to read selected file');
+      }
+      
+      // Validate file size (50MB max)
+      if (!ErrorHandler.validateFileSize(bytes.length, maxMB: 50)) {
+        throw Exception('File size must not exceed 50MB');
       }
 
       final summary = await _summarizeWithGeminiPdf(bytes);
       setState(() => _summary = summary);
+    } on TimeoutException {
+      if (!mounted) return;
+      ErrorHandler.showError(
+        context,
+        'Summarization timed out',
+        details: 'The request took too long. Please try again.',
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      ErrorHandler.showError(
         context,
-      ).showSnackBar(SnackBar(content: Text('Summarization failed: $e')));
+        'Summarization failed',
+        details: ErrorHandler.formatErrorMessage(e),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<String> _summarizeWithGeminiPdf(Uint8List pdfBytes) async {
+  Future<String> _summarizeWithGeminiPdf(List<int> pdfBytes) async {
     final uri = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
     final prompt =
         'Summarize the attached PDF into at most 10 concise bullet points with short headings.'
@@ -137,7 +151,9 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
       ],
     };
     final response = await _postGeminiWithRetry(uri, requestBody);
-    assert(() { print('Raw Gemini summary response: ${response.body}'); return true; }());
+    if (kDebugMode) {
+      debugPrint('Raw Gemini summary response: ${response.body}');
+    }
     if (response.statusCode != 200) {
       throw Exception('Gemini error ${response.statusCode}: ${response.body}');
     }
@@ -146,7 +162,9 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
     if (candidates == null || candidates.isEmpty) return 'No summary produced (model returned no candidates).';
     final first = candidates.first as Map<String, dynamic>;
     final finishReason = first['finishReason']?.toString();
-    assert(() { print('Summarizer finishReason: $finishReason'); return true; }());
+    if (kDebugMode) {
+      debugPrint('Summarizer finishReason: $finishReason');
+    }
     final content = first['content'] as Map<String, dynamic>?;
     final parts = content?['parts'] as List<dynamic>?;
     if (parts == null || parts.isEmpty) {
@@ -161,7 +179,9 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
       if (t is String && t.trim().isNotEmpty) buffer.writeln(t);
     }
     final text = buffer.toString().trim();
-    assert(() { print('Summarizer extracted text length: ${text.length}'); return true; }());
+    if (kDebugMode) {
+      debugPrint('Summarizer extracted text length: ${text.length}');
+    }
     if (text.isEmpty) {
       // Fallback user-facing hint
       return 'No summary produced.';
@@ -173,7 +193,7 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
-    final providedBytes = args != null ? args['pdfBytes'] as Uint8List? : null;
+    final providedBytes = args != null ? args['pdfBytes'] as List<int>? : null;
     final providedName = args != null ? args['pdfFilename'] as String? : null;
     return SafeArea(
       child: Padding(
@@ -207,7 +227,9 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
                                   setState(() => _summary = s);
                                 } catch (e) {
                                   if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
+                                  // ignore: use_build_context_synchronously
+                                  final messenger = ScaffoldMessenger.of(context);
+                                  messenger.showSnackBar(
                                     SnackBar(
                                       content: Text('Summarization failed: $e'),
                                     ),
@@ -249,7 +271,7 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
               child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
+                  color: Colors.white.withAlpha((0.05 * 255).round()),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 padding: const EdgeInsets.all(16),

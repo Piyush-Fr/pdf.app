@@ -1,12 +1,12 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
-import 'dart:convert'; // add for base64 and JSON
-import 'package:http/http.dart' as http; // add for Gemini call
+import '../utils/error_handler.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -37,61 +37,90 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  void _showImportBenchmarkDialog() async {
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: onTap,
+        child: OCLiquidGlassGroup(
+          settings: const OCLiquidGlassSettings(
+            refractStrength: -0.06,
+            blurRadiusPx: 3.0,
+            specStrength: 1.0,
+            lightbandColor: Colors.white,
+          ),
+          child: OCLiquidGlass(
+            width: label.length > 6 ? 130 : 110,
+            height: 40,
+            borderRadius: 12,
+            color: Colors.white.withAlpha((0.10 * 255).round()),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showImportDialog() async {
+    if (!mounted) return;
     await showDialog(
       context: context,
-      builder: (context) => _ImportBenchmarkDialog(
-        onImported:
-            (
-              String fileName,
-              Uint8List pdfBytes,
-              String contextText,
-              int benchmarkScore,
-            ) async {
-              final client = Supabase.instance.client;
-              final storagePath =
-                  'uploads/ ${DateTime.now().millisecondsSinceEpoch}_$fileName';
-              try {
-                final thumb = await _generatePdfThumbnail(pdfBytes);
-                if (!mounted) return;
-                await client.storage
-                    .from(_bucketName)
-                    .uploadBinary(
-                      storagePath,
-                      pdfBytes,
-                      fileOptions: const FileOptions(
-                        contentType: 'application/pdf',
-                        upsert: false,
-                      ),
-                    );
-                // Here, you should also save the benchmark/context metadata, e.g. in a separate table,
-                // or encode as JSON in object metadata if Supabase supports it.
-                // For now, we'll add locally to the dashboard only:
-                setState(() {
-                  _cards.insert(
-                    0,
-                    _PdfCard(
-                      title: fileName,
-                      benchmark: benchmarkScore,
-                      context: contextText,
-                      previewBytes: thumb,
-                      storagePath: storagePath,
-                    ),
-                  );
-                });
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Uploaded and benchmarked: $fileName'),
+      builder: (dialogContext) => _ImportDialog(
+        onImported: (String fileName, Uint8List pdfBytes) async {
+          final client = Supabase.instance.client;
+          final storagePath =
+              'uploads/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+          try {
+            final thumb = await _generatePdfThumbnail(pdfBytes);
+            if (!mounted) return;
+            await client.storage.from(_bucketName).uploadBinary(
+                  storagePath,
+                  pdfBytes,
+                  fileOptions: const FileOptions(
+                    contentType: 'application/pdf',
+                    upsert: false,
                   ),
                 );
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Upload/benchmark failed: $e')),
-                );
-              }
-            },
+            if (!mounted) return;
+            setState(() {
+              _cards.insert(
+                0,
+                _PdfCard(
+                  title: fileName,
+                  benchmark: 0,
+                  context: 'No context',
+                  previewBytes: thumb,
+                  storagePath: storagePath,
+                ),
+              );
+            });
+            if (!mounted) return;
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.showSnackBar(
+              SnackBar(content: Text('Uploaded: $fileName')),
+            );
+          } catch (e) {
+            if (!mounted) return;
+            final messenger = ScaffoldMessenger.of(context);
+            messenger.showSnackBar(
+              SnackBar(content: Text('Upload failed: $e')),
+            );
+          }
+        },
       ),
     );
   }
@@ -105,33 +134,48 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _loadExistingFromSupabase() async {
     try {
       final client = Supabase.instance.client;
+      
+      // Add timeout to prevent hanging
       final items = await client.storage
           .from(_bucketName)
-          .list(path: 'uploads');
+          .list(path: 'uploads')
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw TimeoutException('Loading files timed out'),
+          );
+      
       // Sort newest first
       items.sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
       final List<_PdfCard> fetched = [];
+      
       for (final obj in items) {
         final name = obj.name;
+        if (name.isEmpty) continue; // Skip empty names
+        
         final path = 'uploads/$name';
         Uint8List? thumb;
         try {
-          final data = await client.storage.from(_bucketName).download(path);
+          final data = await client.storage
+              .from(_bucketName)
+              .download(path)
+              .timeout(const Duration(seconds: 10));
           thumb = await _generatePdfThumbnail(data);
-        } catch (_) {
+        } catch (e) {
+          debugPrint('Failed to load thumbnail for $name: $e');
           thumb = null;
         }
+        
         fetched.add(
           _PdfCard(
             title: name,
             benchmark: 72,
-            context:
-                '', // Fix: pass empty string for context when loading legacy PDFs
+            context: '', // Fix: pass empty string for context when loading legacy PDFs
             previewBytes: thumb,
             storagePath: path,
           ),
         );
       }
+      
       if (mounted) {
         setState(() {
           _cards
@@ -139,11 +183,20 @@ class _DashboardScreenState extends State<DashboardScreen>
             ..addAll(fetched);
         });
       }
+    } on TimeoutException catch (e) {
+      if (!mounted) return;
+      ErrorHandler.showError(
+        context,
+        'Loading timed out',
+        details: e.toString(),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      ErrorHandler.showError(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to load files: $e')));
+        'Failed to load files',
+        details: ErrorHandler.formatErrorMessage(e),
+      );
     }
   }
 
@@ -167,34 +220,69 @@ class _DashboardScreenState extends State<DashboardScreen>
             ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: GestureDetector(
-                onTap: _showImportBenchmarkDialog,
-                child: OCLiquidGlassGroup(
-                  settings: const OCLiquidGlassSettings(
-                    refractStrength: -0.06,
-                    blurRadiusPx: 3.0,
-                    specStrength: 1.0,
-                    lightbandColor: Colors.white,
-                  ),
-                  child: OCLiquidGlass(
-                    width: 150,
-                    height: 40,
-                    borderRadius: 12,
-                    color: Colors.white.withAlpha((0.10 * 255).round()),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(Icons.add, color: Colors.white, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'Import PDF',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ],
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    // Benchmark button
+                    _buildActionButton(
+                      icon: Icons.analytics,
+                      label: 'Benchmark',
+                      onTap: () => Navigator.of(context).pushNamed('/benchmark'),
                     ),
-                  ),
+                    // Quiz button
+                    _buildActionButton(
+                      icon: Icons.quiz,
+                      label: 'Quiz',
+                      onTap: () => Navigator.of(context).pushNamed('/quizSetup'),
+                    ),
+                    // Summarizer button
+                    _buildActionButton(
+                      icon: Icons.summarize,
+                      label: 'Summarize',
+                      onTap: () => Navigator.of(context).pushNamed('/summarizer'),
+                    ),
+                    // Flow State button
+                    _buildActionButton(
+                      icon: Icons.account_tree,
+                      label: 'Flow',
+                      onTap: () => Navigator.of(context).pushNamed('/flow'),
+                    ),
+                    // Import PDF button
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: GestureDetector(
+                        onTap: _showImportDialog,
+                        child: OCLiquidGlassGroup(
+                          settings: const OCLiquidGlassSettings(
+                            refractStrength: -0.06,
+                            blurRadiusPx: 3.0,
+                            specStrength: 1.0,
+                            lightbandColor: Colors.white,
+                          ),
+                          child: OCLiquidGlass(
+                            width: 110,
+                            height: 40,
+                            borderRadius: 12,
+                            color: Colors.white.withAlpha((0.10 * 255).round()),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: const [
+                                Icon(Icons.add, color: Colors.white, size: 20),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Import',
+                                  style: TextStyle(color: Colors.white, fontSize: 14),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -233,7 +321,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                             .from(_bucketName)
                             .download(card.storagePath);
                         if (!mounted) return;
-                        Navigator.of(context).pushNamed(
+                        final navigator = Navigator.of(context); // ignore: use_build_context_synchronously
+                        navigator.pushNamed(
                           '/study',
                           arguments: {
                             'centerPanel': true,
@@ -243,7 +332,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                         );
                       } catch (e) {
                         if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        final messenger = ScaffoldMessenger.of(context); // ignore: use_build_context_synchronously
+                        messenger.showSnackBar(
                           SnackBar(content: Text('Open failed: $e')),
                         );
                       }
@@ -426,147 +516,52 @@ class _PdfCard {
   final String storagePath;
 }
 
-class _ImportBenchmarkDialog extends StatefulWidget {
-  final Function(
-    String fileName,
-    Uint8List pdfBytes,
-    String contextText,
-    int benchmarkScore,
-  )
-  onImported;
-  const _ImportBenchmarkDialog({required this.onImported});
+/// Simple dialog for importing PDF files to the dashboard
+class _ImportDialog extends StatefulWidget {
+  final Function(String fileName, Uint8List pdfBytes) onImported;
+  
+  const _ImportDialog({required this.onImported});
+  
   @override
-  State<_ImportBenchmarkDialog> createState() => __ImportBenchmarkDialogState();
+  State<_ImportDialog> createState() => _ImportDialogState();
 }
 
-class __ImportBenchmarkDialogState extends State<_ImportBenchmarkDialog> {
+class _ImportDialogState extends State<_ImportDialog> {
   Uint8List? _pdfBytes;
   String? _fileName;
-  final TextEditingController _contextController = TextEditingController();
-  bool _benchmarking = false;
-  int? _benchmarkScore;
   String? _errorMsg;
-
-  @override
-  void dispose() {
-    _contextController.dispose();
-    super.dispose();
-  }
+  bool _uploading = false;
 
   Future<void> _pickPdf() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['pdf'],
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final picked = result.files.first;
-    setState(() {
-      _fileName = picked.name;
-      _pdfBytes = picked.bytes;
-      _benchmarkScore = null;
-      _errorMsg = null;
-    });
-  }
-
-  Future<void> _runBenchmark() async {
-    if (_pdfBytes == null) return;
-    setState(() {
-      _benchmarking = true;
-      _errorMsg = null;
-    });
     try {
-      final contextText = _contextController.text.trim();
-      print('--- BENCHMARKING DEBUG START ---');
-      print('Context: $contextText');
-
-      final uri = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo',
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        withData: true,
       );
-      final prompt =
-          'You are a PDF benchmarking expert. Your task is to evaluate the relevance of the attached document to a given context.\n'
-          'Context: "$contextText"\n'
-          'Based on this context, provide a score from 0 to 100, where 100 means the document is perfectly relevant and 0 means it is completely irrelevant.\n'
-          'IMPORTANT: Respond with ONLY the integer score. Do not include any other words, symbols, or explanations.';
-
-      print('Prompt sent to Gemini:\n$prompt');
-
-      final body = {
-        'contents': [
-          {
-            'role': 'user',
-            'parts': [
-              {'text': prompt},
-              {
-                'inline_data': {
-                  'mime_type': 'application/pdf',
-                  'data': base64Encode(_pdfBytes!),
-                },
-              },
-            ],
-          },
-        ],
-        'generationConfig': {
-          'temperature': 0.0,
-          'maxOutputTokens': 100,
-          'response_mime_type': 'text/plain',
-        },
-      };
-      final resp = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
-
-      print('Gemini response status: ${resp.statusCode}');
-
-      if (resp.statusCode != 200) {
-        print('Gemini error response body: ${resp.body}');
-        throw Exception('Benchmark error: ${resp.body}');
+      
+      if (result == null || result.files.isEmpty) return;
+      
+      final picked = result.files.first;
+      
+      if (picked.bytes == null) {
+        setState(() => _errorMsg = 'Failed to read file data');
+        return;
       }
-
-      final bodyJson = jsonDecode(resp.body);
-      print('Decoded response JSON: $bodyJson');
-
-      final candidates = bodyJson['candidates'] as List?;
-      String numberStr = '';
-      if (candidates != null && candidates.isNotEmpty) {
-        final content = candidates[0]['content'];
-        if (content != null &&
-            content['parts'] != null &&
-            content['parts'] is List &&
-            content['parts'].isNotEmpty) {
-          final part = content['parts'][0];
-          if (part['text'] != null) {
-            numberStr = part['text'].toString().trim();
-          }
-        }
+      
+      if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
+        setState(() => _errorMsg = 'File size must not exceed 50MB');
+        return;
       }
-
-      print('Extracted model output for parsing: "$numberStr"');
-
-      // Gemini may wrap the number; parse extract an int
-      final match = RegExp(r'(\d{1,3})').firstMatch(numberStr);
-      print('RegExp match on extracted output: ${match?.group(1)}');
-
-      int score = match != null ? int.parse(match.group(1)!) : 0;
-      print('Parsed score (before clamp): $score');
-
-      score = score.clamp(0, 100);
-      print('Final score (after clamp): $score');
-      print('--- BENCHMARKING DEBUG END ---');
-
+      
       setState(() {
-        _benchmarkScore = score;
-        _benchmarking = false;
+        _fileName = picked.name;
+        _pdfBytes = picked.bytes;
+        _errorMsg = null;
       });
     } catch (e) {
-      print('--- BENCHMARKING ERROR ---');
-      print('Error during benchmark: $e');
-      print('--- END BENCHMARKING ERROR ---');
       setState(() {
-        _errorMsg = 'Benchmarking failed: $e';
-        _benchmarking = false;
+        _errorMsg = 'Failed to select file: ${ErrorHandler.formatErrorMessage(e)}';
       });
     }
   }
@@ -574,52 +569,40 @@ class __ImportBenchmarkDialogState extends State<_ImportBenchmarkDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Import & Benchmark PDF'),
+      title: const Text('Import PDF'),
       content: SizedBox(
-        width: 400,
+        width: 350,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _contextController,
-              minLines: 2,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Context/Topic',
-                hintText: 'Enter topic for benchmarking...',
-              ),
+            const Text(
+              'Select a PDF file to upload to your library.',
+              style: TextStyle(fontSize: 14),
             ),
-            const SizedBox(height: 12),
-            _pdfBytes == null
-                ? ElevatedButton.icon(
-                    icon: const Icon(Icons.upload_file),
-                    label: const Text('Select PDF'),
-                    onPressed: _pickPdf,
-                  )
-                : Column(
-                    children: [
-                      Text(_fileName ?? ''),
-                      ElevatedButton.icon(
-                        icon: _benchmarking
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.bolt),
-                        label: Text(
-                          _benchmarkScore == null
-                              ? 'Run Benchmark'
-                              : 'Benchmark: $_benchmarkScore',
-                        ),
-                        onPressed: (_benchmarking || _benchmarkScore != null)
-                            ? null
-                            : _runBenchmark,
-                      ),
-                    ],
+            const SizedBox(height: 20),
+            if (_pdfBytes == null)
+              ElevatedButton.icon(
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Select PDF'),
+                onPressed: _uploading ? null : _pickPdf,
+              )
+            else
+              Column(
+                children: [
+                  const Icon(Icons.picture_as_pdf, size: 48, color: Colors.green),
+                  const SizedBox(height: 8),
+                  Text(
+                    _fileName ?? 'Unknown file',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${(_pdfBytes!.length / 1024).toStringAsFixed(1)} KB',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
             if (_errorMsg != null) ...[
               const SizedBox(height: 12),
               Text(_errorMsg!, style: const TextStyle(color: Colors.red)),
@@ -629,25 +612,27 @@ class __ImportBenchmarkDialogState extends State<_ImportBenchmarkDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () {
-            if (!mounted) return;
-            Navigator.of(context).pop();
-          },
+          onPressed: _uploading ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        if (_pdfBytes != null && _benchmarkScore != null)
+        if (_pdfBytes != null)
           ElevatedButton(
-            onPressed: () async {
-              await widget.onImported(
-                _fileName!,
-                _pdfBytes!,
-                _contextController.text.trim(),
-                _benchmarkScore!,
-              );
-              if (!mounted) return;
-              Navigator.of(context).pop();
-            },
-            child: const Text('Save to Dashboard'),
+            onPressed: _uploading
+                ? null
+                : () async {
+                    setState(() => _uploading = true);
+                    final navigator = Navigator.of(context);
+                    await widget.onImported(_fileName!, _pdfBytes!);
+                    if (!mounted) return;
+                    navigator.pop();
+                  },
+            child: _uploading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Import'),
           ),
       ],
     );

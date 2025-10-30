@@ -25,7 +25,7 @@ class _StudyScreenState extends State<StudyScreen> {
                 width: double.infinity,
                 height: double.infinity,
                 borderRadius: 16,
-                color: Colors.white.withOpacity(0.0),
+                color: Colors.white.withAlpha(0),
               ),
             ),
           ),
@@ -50,11 +50,11 @@ class _StudyScreenState extends State<StudyScreen> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: accent.withOpacity(0.08),
+                    color: accent.withAlpha((0.08 * 255).round()),
                     borderRadius: BorderRadius.circular(999),
                     boxShadow: [
                       BoxShadow(
-                        color: accent.withOpacity(0.25),
+                        color: accent.withAlpha((0.25 * 255).round()),
                         blurRadius: 16,
                         spreadRadius: 1,
                       ),
@@ -81,8 +81,7 @@ class _StudyScreenState extends State<StudyScreen> {
 }
 
 class _DraggableToolsPanel extends StatefulWidget {
-  const _DraggableToolsPanel({this.centerOnAppear = false});
-  final bool centerOnAppear;
+  const _DraggableToolsPanel();
 
   @override
   State<_DraggableToolsPanel> createState() => _DraggableToolsPanelState();
@@ -121,7 +120,7 @@ class _DraggableToolsPanelState extends State<_DraggableToolsPanel> {
             width: 320,
             height: 520,
             borderRadius: 24,
-            color: Colors.white.withOpacity(0.08),
+            color: Colors.white.withAlpha((0.08 * 255).round()),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: DefaultTextStyle.merge(
@@ -241,8 +240,10 @@ extension _PreviewHelpers on _DraggableToolsPanelState {
       );
       await page.close();
       await doc.close();
-      if (!mounted) return;
-      setState(() => _thumb = img?.bytes);
+      if (mounted) {
+        // ignore: invalid_use_of_protected_member
+        setState(() => _thumb = img?.bytes);
+      }
     } catch (_) {
       // ignore preview errors
     }
@@ -265,7 +266,7 @@ class _ToolTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         child: Ink(
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.05),
+            color: Colors.white.withAlpha((0.05 * 255).round()),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Padding(

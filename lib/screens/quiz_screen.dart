@@ -43,13 +43,13 @@ class _QuizScreenState extends State<QuizScreen> {
                   ),
                   const Spacer(),
                   if (_submitted)
-                    Container(
+                      Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: accent.withOpacity(0.12),
+                        color: accent.withAlpha((0.12 * 255).round()),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text('Score: $_score / ${_questions.length}'),
@@ -77,7 +77,7 @@ class _QuizScreenState extends State<QuizScreen> {
                         width: double.infinity,
                         height: null,
                         borderRadius: 14,
-                        color: Colors.white.withOpacity(0.10),
+                        color: Colors.white.withAlpha((0.10 * 255).round()),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
@@ -88,26 +88,36 @@ class _QuizScreenState extends State<QuizScreen> {
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: 8),
-                              for (var i = 0; i < opts.length; i++)
-                                RadioListTile<int>(
-                                  value: i,
-                                  groupValue: selected,
-                                  onChanged: _submitted
-                                      ? null
-                                      : (v) =>
-                                            setState(() => _answers[index] = v),
-                                  title: Text(opts[i]),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  tileColor: _submitted
-                                      ? (i == correct
-                                            ? Colors.green.withOpacity(0.15)
-                                            : (selected == i
-                                                  ? Colors.red.withOpacity(0.15)
-                                                  : null))
-                                      : null,
+                              RadioGroup<int?>(
+                                groupValue: selected,
+                                onChanged: (v) {
+                                  if (!_submitted && v != null) {
+                                    setState(() => _answers[index] = v);
+                                  }
+                                },
+                                child: Column(
+                                  children: [
+                                    for (var i = 0; i < opts.length; i++)
+                                      ListTile(
+                                        leading: Radio<int>(value: i),
+                                        title: Text(opts[i]),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        tileColor: _submitted
+                                            ? (i == correct
+                                                  ? Colors.green.withAlpha((0.15 * 255).round())
+                                                  : (selected == i
+                                                        ? Colors.red.withAlpha((0.15 * 255).round())
+                                                        : null))
+                                            : null,
+                                        onTap: _submitted
+                                            ? null
+                                            : () => setState(() => _answers[index] = i),
+                                      ),
+                                  ],
                                 ),
+                              ),
                             ],
                           ),
                         ),
