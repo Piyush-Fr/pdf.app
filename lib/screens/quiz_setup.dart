@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +14,7 @@ class QuizSetupScreen extends StatefulWidget {
 }
 
 class _QuizSetupScreenState extends State<QuizSetupScreen> {
-  static const String _geminiApiKey = 'AIzaSyDbtD-Wj3SjJr3cDpHpucpF6VRPRBJ4GdU';
+  static const String _geminiApiKey = 'AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo';
   final TextEditingController _contextController = TextEditingController();
   bool _loading = false;
   String? _fileName;
@@ -58,12 +59,13 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
     );
     final systemPrompt =
-        'You are a strict quiz generator. Return ONLY valid JSON with no commentary or code fences.';
+        'You are a strict quiz generator. Return ONLY valid JSON.';
     final userPrompt =
-        'Create 8 multiple-choice questions based on the attached PDF and this context: "${contextText}".\n'
-        'Format STRICT JSON as:\n'
-        '{"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": number 0-3}]}\n'
-        'Keep questions concise, unambiguous, and grounded in the material.';
+        'Create a minimum of 10 multiple-choice questions (prefer more if possible) based on the attached PDF and this context: "${contextText}". Do NOT stop at fewer than 10.'
+        '\nEach question and option MUST be concise.'
+        '\nReturn ONLY pure JSON in this format: '
+        '{"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": number 0-3}]}'
+        '\nNo markdown. No triple backticks. No commentary. No explanations. No comments. No code fences. Only machine-readable JSON!';
 
     final body = {
       'system_instruction': {
@@ -88,7 +90,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       ],
       'generationConfig': {
         'temperature': 0.3,
-        'maxOutputTokens': 2048,
+        'maxOutputTokens': 4096,
         'response_mime_type': 'application/json',
       },
       'safetySettings': [
@@ -105,15 +107,29 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       ],
     };
 
-    final resp = await http.post(
+    final resp = await _postGeminiWithRetry(
       uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
+      body,
     );
+
+    assert(() {
+      print('Raw Gemini quiz API response: ${resp.body}');
+      return true;
+    }());
+
     if (resp.statusCode != 200) {
       throw Exception('Gemini error ${resp.statusCode}: ${resp.body}');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    assert(() {
+      try {
+        final cands = data['candidates'] as List?;
+        final first = (cands != null && cands.isNotEmpty) ? cands.first as Map<String, dynamic> : null;
+        final finishReason = first != null ? first['finishReason'] : null;
+        print('Quiz finishReason: $finishReason');
+      } catch (_) {}
+      return true;
+    }());
     final candidates = data['candidates'] as List<dynamic>?;
     if (candidates == null || candidates.isEmpty) {
       throw Exception('No quiz produced');
@@ -121,37 +137,54 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     // Concatenate any text parts if model returns multiple parts
     final parts =
         (candidates.first['content']?['parts'] as List?)
-            ?.whereType<Map>()
-            .toList() ??
-        [];
+                ?.whereType<Map>()
+                .toList() ??
+            [];
     final buffer = StringBuffer();
     for (final p in parts) {
       final t = p['text'];
       if (t is String) buffer.write(t);
     }
     final text = buffer.toString().trim();
+
+    assert(() {
+      print('Extracted model output for quiz parsing: $text');
+      return true;
+    }());
+
     if (text.isEmpty) {
-      final retry = await _retryContextOnly(contextText);
+      final retry = await _retryContextOnly(contextText, prevFail: true);
       if (retry == null || retry.trim().isEmpty) {
-        throw Exception('Empty response');
+        throw Exception('Empty response from model.');
       }
       return _safeParseQuizJson(retry);
     }
 
     // Try parse JSON safely
-    final parsed = _safeParseQuizJson(text);
-    if (parsed['questions'] is! List) {
-      throw Exception('Malformed quiz JSON');
+    try {
+      final parsed = _safeParseQuizJson(text);
+      if (parsed['questions'] is! List) {
+        throw Exception('Malformed quiz JSON');
+      }
+      return parsed;
+    } catch (e) {
+      // Show partial output in error snackbar, debug print for diagnosis
+      assert(() {
+        print('Quiz JSON parse error! Raw model text: $text');
+        print('Parse exception: $e');
+        return true;
+      }());
+      throw FormatException('Failed to parse quiz JSON.\nModel output: $text');
     }
-    return parsed;
   }
 
-  Future<String?> _retryContextOnly(String contextText) async {
+  Future<String?> _retryContextOnly(String contextText, {bool prevFail = false}) async {
     final uri = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
     );
-    final prompt =
-        'Create 5 MCQs from this context only (no PDF available). Return pure JSON: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: ${contextText}';
+    final prompt = prevFail
+        ? 'Last time you did NOT return valid JSON. This time, RETURN ONLY MACHINE-READABLE JSON. No markdown, code fences, commentary. Format: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: ${contextText}'
+        : 'Create a minimum of 10 MCQs from this context only (no PDF available). Do NOT stop at fewer than 10. Use STRICT JSON. Return pure JSON: {"questions": [{"question": string, "options": [string,string,string,string], "correctIndex": 0-3}]}\nContext: ${contextText}';
     final body = {
       'system_instruction': {
         'role': 'system',
@@ -169,7 +202,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       ],
       'generationConfig': {
         'temperature': 0.3,
-        'maxOutputTokens': 1024,
+        'maxOutputTokens': 2048,
         'response_mime_type': 'application/json',
       },
       'safetySettings': [
@@ -185,26 +218,77 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         },
       ],
     };
-    final resp = await http.post(
+    final resp = await _postGeminiWithRetry(
       uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
+      body,
     );
+    assert(() {
+      print('Raw Gemini retry response: ${resp.body}');
+      return true;
+    }());
     if (resp.statusCode != 200) return null;
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
     final candidates = data['candidates'] as List<dynamic>?;
     if (candidates == null || candidates.isEmpty) return null;
     final parts =
         (candidates.first['content']?['parts'] as List?)
-            ?.whereType<Map>()
-            .toList() ??
-        [];
+                ?.whereType<Map>()
+                .toList() ??
+            [];
     final buffer = StringBuffer();
     for (final p in parts) {
       final t = p['text'];
       if (t is String) buffer.write(t);
     }
     return buffer.toString();
+  }
+
+  Future<http.Response> _postGeminiWithRetry(Uri uri, Map<String, dynamic> body) async {
+    const int maxAttempts = 3;
+    int attempt = 0;
+    Duration delay = const Duration(seconds: 1);
+    http.Response? lastResp;
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        final resp = await http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        );
+        // Detect overload via status code or error payload
+        bool overloaded = resp.statusCode == 429 || resp.statusCode == 503;
+        if (!overloaded && resp.statusCode >= 500 && resp.statusCode < 600) {
+          overloaded = true;
+        }
+        if (!overloaded) {
+          // Also inspect JSON error payload if provided
+          try {
+            final parsed = jsonDecode(resp.body);
+            final err = parsed is Map ? parsed['error'] as Map? : null;
+            if (err != null) {
+              final status = err['status']?.toString();
+              if (status == 'UNAVAILABLE') overloaded = true;
+            }
+          } catch (_) {}
+        }
+        if (!overloaded) return resp;
+        lastResp = resp;
+        assert(() {
+          print('Gemini overloaded (attempt $attempt/${maxAttempts}). Retrying in ${delay.inSeconds}s...');
+          return true;
+        }());
+      } catch (e) {
+        // Network or transient error, retry
+        assert(() {
+          print('Gemini HTTP error on attempt $attempt: $e');
+          return true;
+        }());
+      }
+      await Future.delayed(delay);
+      delay *= 2;
+    }
+    return lastResp ?? http.Response('Retry attempts exhausted', 503);
   }
 
   Map<String, dynamic> _safeParseQuizJson(String raw) {
@@ -216,32 +300,34 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         .replaceAll('\u201d', '"')
         .replaceAll('\u2018', "'")
         .replaceAll('\u2019', "'");
-    // Remove trailing commas
+    // Remove trailing commas before closing tokens
     s = s.replaceAll(RegExp(r",\s*(\]|\})"), r"$1");
     // Attempt 1: direct parse
     try {
       return jsonDecode(s) as Map<String, dynamic>;
-    } catch (_) {
-      /* fallthrough */
-    }
-
-    // Attempt 2: trim to outermost braces (if extra text surrounds)
+    } catch (_) {}
+    // Attempt 2: trim outermost {...}
     final start = s.indexOf('{');
     final endLast = s.lastIndexOf('}');
     if (start != -1 && endLast != -1 && endLast > start) {
       final sub = s.substring(start, endLast + 1);
       try {
         return jsonDecode(sub) as Map<String, dynamic>;
-      } catch (_) {
-        /* fallthrough */
+      } catch (_) {}
+      // Attempt 3: find first valid {...} substring
+      final reg = RegExp(r'\{[^}]*\}');
+      final matches = reg.allMatches(s);
+      for (final match in matches) {
+        try {
+          final candidate = s.substring(match.start, match.end);
+          return jsonDecode(candidate) as Map<String, dynamic>;
+        } catch (_) {}
       }
-      // Attempt 3: balance braces/brackets by appending closers
+      // Attempt 4: balance braces/brackets by appending closers
       final balanced = _balanceJsonBrackets(sub);
       try {
         return jsonDecode(balanced) as Map<String, dynamic>;
-      } catch (_) {
-        /* fallthrough */
-      }
+      } catch (_) {}
     }
     throw const FormatException('Failed to parse quiz JSON');
   }

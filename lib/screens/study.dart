@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
+import 'package:pdfx/pdfx.dart';
 
 class StudyScreen extends StatefulWidget {
   const StudyScreen({super.key});
@@ -27,13 +29,8 @@ class _StudyScreenState extends State<StudyScreen> {
               ),
             ),
           ),
-          // Floating tools panel (draggable)
-          _DraggableToolsPanel(
-            centerOnAppear:
-                (ModalRoute.of(context)?.settings.arguments
-                    as Map?)?['centerPanel'] ==
-                true,
-          ),
+          // Floating tools panel (static)
+          const _DraggableToolsPanel(),
           // Top bar
           Positioned(
             left: 16,
@@ -92,29 +89,27 @@ class _DraggableToolsPanel extends StatefulWidget {
 }
 
 class _DraggableToolsPanelState extends State<_DraggableToolsPanel> {
-  Offset _offset = const Offset(24, 120);
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (widget.centerOnAppear) {
-      final size = MediaQuery.of(context).size;
-      final targetRight = (size.width - 320) / 2;
-      final dx = 24 - targetRight;
-      final dy = (size.height - 520) / 2;
-      _offset = Offset(dx, dy);
-    }
-  }
-
+  Uint8List? _thumb;
   @override
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
-    return Positioned(
-      right: 24 - _offset.dx,
-      top: _offset.dy,
-      width: 320,
-      child: GestureDetector(
-        onPanUpdate: (d) => setState(() => _offset += d.delta),
+    final args = ModalRoute.of(context)?.settings.arguments as Map?;
+    final Uint8List? pdfBytes = args != null
+        ? args['pdfBytes'] as Uint8List?
+        : null;
+    final String? pdfFilename = args != null
+        ? args['pdfFilename'] as String?
+        : null;
+
+    if (_thumb == null && pdfBytes != null) {
+      _renderThumb(pdfBytes);
+    }
+
+    return Align(
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: 320,
+        height: 520,
         child: OCLiquidGlassGroup(
           settings: const OCLiquidGlassSettings(
             refractStrength: -0.06,
@@ -147,7 +142,7 @@ class _DraggableToolsPanelState extends State<_DraggableToolsPanel> {
                               ),
                         ),
                         const Spacer(),
-                        Icon(Icons.drag_indicator, color: Colors.white60),
+                        Icon(Icons.adjust, color: Colors.white60),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -181,22 +176,48 @@ class _DraggableToolsPanelState extends State<_DraggableToolsPanel> {
                         );
                       },
                     ),
-                    _ToolTile(icon: Icons.chat_bubble_outline, label: 'Chat'),
+                    _ToolTile(
+                      icon: Icons.bolt,
+                      label: 'Flow State',
+                      onTap: () => Navigator.of(context).pushNamed(
+                        '/flow',
+                        arguments: {
+                          'pdfBytes': pdfBytes,
+                          'pdfFilename': pdfFilename,
+                        },
+                      ),
+                    ),
                     const SizedBox(height: 12),
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(16),
+                    if (pdfBytes != null)
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).pushNamed(
+                          '/pdf',
+                          arguments: {
+                            'pdfBytes': pdfBytes,
+                            'pdfFilename': pdfFilename,
+                          },
                         ),
-                        child: const Center(
-                          child: Text(
-                            'Tool Output Panel',
-                            textAlign: TextAlign.center,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            height: 220,
+                            width: double.infinity,
+                            color: Colors.white,
+                            child: _thumb != null
+                                ? Image.memory(_thumb!, fit: BoxFit.cover)
+                                : const Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  ),
                           ),
                         ),
                       ),
-                    ),
+                    // Output panel removed per request
                   ],
                 ),
               ),
@@ -205,6 +226,26 @@ class _DraggableToolsPanelState extends State<_DraggableToolsPanel> {
         ),
       ),
     );
+  }
+}
+
+extension _PreviewHelpers on _DraggableToolsPanelState {
+  Future<void> _renderThumb(Uint8List bytes) async {
+    try {
+      final doc = await PdfDocument.openData(bytes);
+      final page = await doc.getPage(1);
+      final img = await page.render(
+        width: 600,
+        height: 800,
+        format: PdfPageImageFormat.png,
+      );
+      await page.close();
+      await doc.close();
+      if (!mounted) return;
+      setState(() => _thumb = img?.bytes);
+    } catch (_) {
+      // ignore preview errors
+    }
   }
 }
 

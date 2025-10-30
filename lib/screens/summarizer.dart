@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -14,10 +15,55 @@ class SummarizerScreen extends StatefulWidget {
 }
 
 class _SummarizerScreenState extends State<SummarizerScreen> {
-  static const String _geminiApiKey = 'AIzaSyDbtD-Wj3SjJr3cDpHpucpF6VRPRBJ4GdU';
+  static const String _geminiApiKey = 'AIzaSyBKRquBMtDQsyM7dw8OZlZZe3whX29GrZo';
   bool _loading = false;
   String? _summary;
   String? _fileName;
+
+  Future<http.Response> _postGeminiWithRetry(Uri uri, Map<String, dynamic> body) async {
+    const int maxAttempts = 5;
+    int attempt = 0;
+    Duration delay = const Duration(seconds: 2);
+    http.Response? lastResp;
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        final resp = await http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        );
+        bool overloaded = resp.statusCode == 429 || resp.statusCode == 503;
+        if (!overloaded && resp.statusCode >= 500 && resp.statusCode < 600) {
+          overloaded = true;
+        }
+        if (!overloaded) {
+          try {
+            final parsed = jsonDecode(resp.body);
+            final err = parsed is Map ? parsed['error'] as Map? : null;
+            if (err != null) {
+              final status = err['status']?.toString();
+              if (status == 'UNAVAILABLE') overloaded = true;
+            }
+          } catch (_) {}
+        }
+        if (!overloaded) return resp;
+        lastResp = resp;
+        assert(() {
+          print('Gemini summarizer overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...');
+          return true;
+        }());
+      } catch (e) {
+        assert(() {
+          print('Gemini summarizer HTTP error on attempt $attempt: $e');
+          return true;
+        }());
+      }
+      await Future.delayed(delay);
+      delay = Duration(seconds: (delay.inSeconds * 2).clamp(2, 32));
+    }
+    return lastResp ?? http.Response('{"error":{"status":"UNAVAILABLE","message":"Retry attempts exhausted"}}', 503);
+  }
 
   Future<void> _pickAndSummarize() async {
     if (_loading) return;
@@ -60,7 +106,9 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
     );
     final prompt =
-        'Summarize the attached PDF into concise bullet points with headings, under 250 words.';
+        'Summarize the attached PDF into at most 10 concise bullet points with short headings.'
+        '\nHard cap: total <= 200 words. Keep each bullet <= 20 words.'
+        '\nNo long prose, no code, no tables. Output plain text only.';
     final requestBody = {
       'contents': [
         {
@@ -76,23 +124,49 @@ class _SummarizerScreenState extends State<SummarizerScreen> {
           ],
         },
       ],
+      'generationConfig': {
+        'temperature': 0.2,
+        'maxOutputTokens': 4096,
+        'response_mime_type': 'text/plain',
+      },
+      'safetySettings': [
+        {'category': 'HARM_CATEGORY_HARASSMENT', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_HATE_SPEECH', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'threshold': 'BLOCK_NONE'},
+        {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_NONE'},
+      ],
     };
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(requestBody),
-    );
+    final response = await _postGeminiWithRetry(uri, requestBody);
+    assert(() { print('Raw Gemini summary response: ${response.body}'); return true; }());
     if (response.statusCode != 200) {
       throw Exception('Gemini error ${response.statusCode}: ${response.body}');
     }
     final map = jsonDecode(response.body) as Map<String, dynamic>;
     final candidates = map['candidates'] as List<dynamic>?;
-    if (candidates == null || candidates.isEmpty) return 'No summary produced.';
-    final content = candidates.first['content'] as Map<String, dynamic>?;
+    if (candidates == null || candidates.isEmpty) return 'No summary produced (model returned no candidates).';
+    final first = candidates.first as Map<String, dynamic>;
+    final finishReason = first['finishReason']?.toString();
+    assert(() { print('Summarizer finishReason: $finishReason'); return true; }());
+    final content = first['content'] as Map<String, dynamic>?;
     final parts = content?['parts'] as List<dynamic>?;
-    if (parts == null || parts.isEmpty) return 'No summary produced.';
-    final text = parts.first['text'] as String?;
-    return text ?? 'No summary produced.';
+    if (parts == null || parts.isEmpty) {
+      if (finishReason == 'MAX_TOKENS') {
+        return 'Summary truncated by model output limit. Please try again or pick a smaller PDF.';
+      }
+      return 'No summary produced.';
+    }
+    final buffer = StringBuffer();
+    for (final part in parts) {
+      final t = (part as Map)['text'];
+      if (t is String && t.trim().isNotEmpty) buffer.writeln(t);
+    }
+    final text = buffer.toString().trim();
+    assert(() { print('Summarizer extracted text length: ${text.length}'); return true; }());
+    if (text.isEmpty) {
+      // Fallback user-facing hint
+      return 'No summary produced.';
+    }
+    return text;
   }
 
   @override

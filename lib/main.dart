@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/dashboard.dart';
 import 'screens/study.dart';
@@ -7,6 +8,8 @@ import 'screens/login.dart';
 import 'screens/summarizer.dart';
 import 'screens/quiz_setup.dart';
 import 'screens/quiz_screen.dart';
+import 'screens/pdf_reader.dart';
+import 'screens/flow_state.dart';
 import 'widgets/liquid_cursor_overlay.dart';
 
 Future<void> main() async {
@@ -61,6 +64,22 @@ class MyApp extends StatelessWidget {
           final args =
               ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>;
           return _LiquidBackplate(child: QuizScreen(quiz: args));
+        },
+        '/flow': (ctx) {
+          final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
+          final bytes = args?['pdfBytes'] as Uint8List?;
+          final name = args?['pdfFilename'] as String?;
+          return _LiquidBackplate(
+            child: FlowStateScreen(pdfBytes: bytes!, filename: name),
+          );
+        },
+        '/pdf': (ctx) {
+          final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
+          final bytes = args?['pdfBytes'] as Uint8List?;
+          final name = args?['pdfFilename'] as String?;
+          return _LiquidBackplate(
+            child: PdfReaderScreen(bytes: bytes!, filename: name),
+          );
         },
       },
       builder: (context, child) {
