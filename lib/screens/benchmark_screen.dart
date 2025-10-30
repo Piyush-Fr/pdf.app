@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import '../utils/error_handler.dart';
 import '../config/app_config.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:typed_data';
 
 class BenchmarkScreen extends StatefulWidget {
   const BenchmarkScreen({super.key});
@@ -33,54 +35,56 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
     if (kDebugMode) {
       debugPrint('=== PDF SELECTION START ===');
     }
-    
+
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['pdf'],
         withData: true,
       );
-      
+
       if (result == null || result.files.isEmpty) {
         if (kDebugMode) {
           debugPrint('User cancelled PDF selection');
         }
         return;
       }
-      
+
       final picked = result.files.first;
-      
+
       if (kDebugMode) {
         debugPrint('PDF selected: ${picked.name}');
         debugPrint('PDF size: ${picked.size} bytes');
         debugPrint('Extension: ${picked.extension}');
       }
-      
+
       if (picked.bytes == null) {
         if (kDebugMode) {
           debugPrint('❌ Failed to read PDF bytes');
         }
         throw Exception('Failed to read selected file');
       }
-      
+
       // Validate file size (50MB max)
       if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
         if (kDebugMode) {
-          debugPrint('❌ File too large: ${(picked.bytes!.length / 1024 / 1024).toStringAsFixed(2)} MB (max 50MB)');
+          debugPrint(
+            '❌ File too large: ${(picked.bytes!.length / 1024 / 1024).toStringAsFixed(2)} MB (max 50MB)',
+          );
         }
         throw Exception('File size must not exceed 50MB');
       }
-      
+
       if (kDebugMode) {
         debugPrint('✓ PDF validation passed');
       }
-      
+
       setState(() {
         _fileName = picked.name;
         _pdfBytes = picked.bytes;
         _result = null; // Clear previous results
       });
-      
+
       if (kDebugMode) {
         debugPrint('✓ PDF loaded successfully');
         debugPrint('=== PDF SELECTION COMPLETE ===');
@@ -105,7 +109,7 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       debugPrint('║     BENCHMARK RUN INITIATED                  ║');
       debugPrint('╚══════════════════════════════════════════════╝');
     }
-    
+
     if (_pdfBytes == null) {
       if (kDebugMode) {
         debugPrint('❌ No PDF selected');
@@ -115,12 +119,12 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
     }
 
     final contextText = _contextController.text.trim();
-    
+
     if (kDebugMode) {
       debugPrint('Validating context input...');
       debugPrint('Context length: ${contextText.length} characters');
     }
-    
+
     final validation = ErrorHandler.validateInput(
       contextText,
       fieldName: 'Context',
@@ -128,7 +132,7 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       maxLength: 1000,
       required: true,
     );
-    
+
     if (validation != null) {
       if (kDebugMode) {
         debugPrint('❌ Validation failed: $validation');
@@ -136,7 +140,7 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       ErrorHandler.showError(context, validation);
       return;
     }
-    
+
     if (kDebugMode) {
       debugPrint('✓ Validation passed');
     }
@@ -150,17 +154,17 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       if (kDebugMode) {
         debugPrint('Starting Gemini API analysis...');
       }
-      
+
       final result = await _analyzePdfWithGemini(_pdfBytes!, contextText);
-      
+
       if (!mounted) return;
-      
+
       if (kDebugMode) {
         debugPrint('✓ Analysis complete, updating UI');
       }
-      
+
       setState(() => _result = result);
-      
+
       if (kDebugMode) {
         debugPrint('╔══════════════════════════════════════════════╗');
         debugPrint('║     BENCHMARK RUN COMPLETED SUCCESSFULLY     ║');
@@ -202,20 +206,25 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
   ) async {
     if (kDebugMode) {
       debugPrint('=== BENCHMARK ANALYSIS START ===');
-      debugPrint('PDF size: ${pdfBytes.length} bytes (${(pdfBytes.length / 1024 / 1024).toStringAsFixed(2)} MB)');
+      debugPrint(
+        'PDF size: ${pdfBytes.length} bytes (${(pdfBytes.length / 1024 / 1024).toStringAsFixed(2)} MB)',
+      );
       debugPrint('Context text: $contextText');
       debugPrint('Model: gemini-2.5-flash');
     }
-    
+
     final uri = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
-    
+
     if (kDebugMode) {
-      debugPrint('API endpoint: ${uri.toString().replaceAll(AppConfig.geminiApiKey, "***KEY_HIDDEN***")}');
+      debugPrint(
+        'API endpoint: ${uri.toString().replaceAll(AppConfig.geminiApiKey, "***KEY_HIDDEN***")}',
+      );
     }
 
-    final prompt = '''
+    final prompt =
+        '''
 You are an expert educational content evaluator. Analyze the attached PDF study material in the context of: "$contextText"
 
 Rate the material from a student's perspective who has ONE WEEK before their exam. Use this scoring criteria:
@@ -303,23 +312,25 @@ Be honest and constructive. The scores should add up to the overallScore.
         },
       ],
     };
-    
+
     if (kDebugMode) {
       final genConfig = body['generationConfig'] as Map<String, dynamic>?;
       debugPrint('Request body configuration:');
       debugPrint('  - Temperature: ${genConfig?['temperature']}');
       debugPrint('  - Max tokens: ${genConfig?['maxOutputTokens']}');
       debugPrint('  - Response format: ${genConfig?['response_mime_type']}');
-      debugPrint('  - PDF encoded: ${base64Encode(pdfBytes).length} characters');
+      debugPrint(
+        '  - PDF encoded: ${base64Encode(pdfBytes).length} characters',
+      );
     }
 
     if (kDebugMode) {
       debugPrint('Sending POST request to Gemini API...');
       debugPrint('Request headers: Content-Type: application/json');
     }
-    
+
     final startTime = DateTime.now();
-    
+
     final resp = await http
         .post(
           uri,
@@ -337,9 +348,11 @@ Be honest and constructive. The scores should add up to the overallScore.
         );
 
     final duration = DateTime.now().difference(startTime);
-    
+
     if (kDebugMode) {
-      debugPrint('✓ Response received in ${duration.inSeconds}.${duration.inMilliseconds % 1000}s');
+      debugPrint(
+        '✓ Response received in ${duration.inSeconds}.${duration.inMilliseconds % 1000}s',
+      );
       debugPrint('Response status code: ${resp.statusCode}');
       debugPrint('Response headers: ${resp.headers}');
     }
@@ -361,15 +374,15 @@ Be honest and constructive. The scores should add up to the overallScore.
     if (kDebugMode) {
       debugPrint('Parsing JSON response...');
     }
-    
+
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    
+
     if (kDebugMode) {
       debugPrint('Response structure keys: ${data.keys.toList()}');
     }
-    
+
     final candidates = data['candidates'] as List<dynamic>?;
-    
+
     if (candidates == null || candidates.isEmpty) {
       if (kDebugMode) {
         debugPrint('❌ No candidates in response');
@@ -377,7 +390,7 @@ Be honest and constructive. The scores should add up to the overallScore.
       }
       throw Exception('No benchmark data received from API');
     }
-    
+
     if (kDebugMode) {
       debugPrint('Number of candidates: ${candidates.length}');
       debugPrint('First candidate structure: ${candidates.first}');
@@ -385,11 +398,11 @@ Be honest and constructive. The scores should add up to the overallScore.
 
     final firstCandidate = candidates.first as Map<String, dynamic>;
     final finishReason = firstCandidate['finishReason'];
-    
+
     if (kDebugMode) {
       debugPrint('Finish reason: $finishReason');
     }
-    
+
     if (finishReason != null && finishReason != 'STOP') {
       if (kDebugMode) {
         debugPrint('⚠️ Unexpected finish reason: $finishReason');
@@ -397,17 +410,17 @@ Be honest and constructive. The scores should add up to the overallScore.
       if (finishReason == 'MAX_TOKENS') {
         throw Exception(
           'Response was truncated due to token limit. The PDF analysis was too detailed. '
-          'Try a shorter PDF or more specific context.'
+          'Try a shorter PDF or more specific context.',
         );
       }
     }
 
     final parts = (firstCandidate['content']?['parts'] as List?) ?? [];
-    
+
     if (kDebugMode) {
       debugPrint('Number of parts: ${parts.length}');
     }
-    
+
     final text = parts.map((p) => (p['text'] ?? '') as String).join().trim();
 
     if (kDebugMode) {
@@ -428,23 +441,23 @@ Be honest and constructive. The scores should add up to the overallScore.
     if (kDebugMode) {
       debugPrint('Attempting to parse benchmark JSON...');
     }
-    
+
     try {
       final resultJson = jsonDecode(text) as Map<String, dynamic>;
-      
+
       if (kDebugMode) {
         debugPrint('✓ JSON parsed successfully');
         debugPrint('Result keys: ${resultJson.keys.toList()}');
         debugPrint('Overall score: ${resultJson['overallScore']}');
       }
-      
+
       final result = BenchmarkResult.fromJson(resultJson);
-      
+
       if (kDebugMode) {
         debugPrint('✓ BenchmarkResult object created');
         debugPrint('=== BENCHMARK ANALYSIS COMPLETE ===');
       }
-      
+
       return result;
     } catch (e, stackTrace) {
       if (kDebugMode) {
@@ -461,7 +474,7 @@ Be honest and constructive. The scores should add up to the overallScore.
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
-    
+
     // Check if PDF was passed from another screen
     if (args != null && _pdfBytes == null) {
       _pdfBytes = args['pdfBytes'] as List<int>?;
@@ -487,15 +500,15 @@ Be honest and constructive. The scores should add up to the overallScore.
               // PDF Selection Card
               _buildSelectionCard(accent),
               const SizedBox(height: 16),
-              
+
               // Context Input Card
               _buildContextCard(accent),
               const SizedBox(height: 16),
-              
+
               // Benchmark Button
               _buildBenchmarkButton(accent),
               const SizedBox(height: 24),
-              
+
               // Results Display
               if (_result != null) _buildResultsCard(accent, _result!),
               if (_loading) _buildLoadingCard(),
@@ -542,7 +555,10 @@ Be honest and constructive. The scores should add up to the overallScore.
               const SizedBox(height: 12),
               if (_fileName != null) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: accent.withAlpha((0.15 * 255).round()),
                     borderRadius: BorderRadius.circular(8),
@@ -622,7 +638,8 @@ Be honest and constructive. The scores should add up to the overallScore.
                 maxLines: 6,
                 style: const TextStyle(fontSize: 14),
                 decoration: InputDecoration(
-                  hintText: 'e.g., "Final exam for Data Structures & Algorithms - focus on trees, graphs, sorting algorithms, and dynamic programming"',
+                  hintText:
+                      'e.g., "Final exam for Data Structures & Algorithms - focus on trees, graphs, sorting algorithms, and dynamic programming"',
                   hintStyle: TextStyle(
                     color: Colors.white.withAlpha((0.5 * 255).round()),
                     fontSize: 13,
@@ -672,7 +689,7 @@ Be honest and constructive. The scores should add up to the overallScore.
               ),
             )
           : const Icon(Icons.analytics, size: 24),
-      label: Text(_loading ? 'Analyzing...' : 'Run Benchmark'),
+      label: Text(_loading ? 'Analyzing...' : 'Import'),
     );
   }
 
@@ -718,17 +735,27 @@ Be honest and constructive. The scores should add up to the overallScore.
         // Overall Score Card
         _buildOverallScoreCard(accent, result),
         const SizedBox(height: 16),
-        
+
         // Detailed Scores
         _buildDetailedScoresCard(accent, result),
         const SizedBox(height: 16),
-        
+
         // Strengths & Improvements
         _buildFeedbackCard(accent, result),
         const SizedBox(height: 16),
-        
+
         // Study Recommendation
         _buildRecommendationCard(accent, result),
+        const SizedBox(height: 20),
+        FilledButton.icon(
+          onPressed: _loading || _pdfBytes == null ? null : _importToLibrary,
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+          icon: const Icon(Icons.cloud_upload),
+          label: const Text('Import to Library'),
+        ),
       ],
     );
   }
@@ -737,7 +764,7 @@ Be honest and constructive. The scores should add up to the overallScore.
     final score = result.overallScore;
     final color = _getScoreColor(score);
     final grade = _getGrade(score);
-    
+
     return OCLiquidGlassGroup(
       settings: const OCLiquidGlassSettings(
         refractStrength: -0.08,
@@ -772,7 +799,9 @@ Be honest and constructive. The scores should add up to the overallScore.
                     child: CircularProgressIndicator(
                       value: score / 100,
                       strokeWidth: 12,
-                      backgroundColor: Colors.white.withAlpha((0.1 * 255).round()),
+                      backgroundColor: Colors.white.withAlpha(
+                        (0.1 * 255).round(),
+                      ),
                       valueColor: AlwaysStoppedAnimation<Color>(color),
                     ),
                   ),
@@ -802,10 +831,7 @@ Be honest and constructive. The scores should add up to the overallScore.
               Text(
                 _getScoreMessage(score),
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.white70,
-                ),
+                style: const TextStyle(fontSize: 14, color: Colors.white70),
               ),
             ],
           ),
@@ -834,10 +860,7 @@ Be honest and constructive. The scores should add up to the overallScore.
             children: [
               const Text(
                 'Detailed Breakdown',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 20),
               _buildScoreItem(
@@ -895,7 +918,7 @@ Be honest and constructive. The scores should add up to the overallScore.
   ) {
     final percentage = (score / maxScore) * 100;
     final color = _getScoreColor(percentage);
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -969,31 +992,33 @@ Be honest and constructive. The scores should add up to the overallScore.
                   const SizedBox(width: 8),
                   const Text(
                     'Strengths',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              ...result.strengths.map((strength) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('✓ ', style: TextStyle(color: Colors.green, fontSize: 16)),
-                        Expanded(
-                          child: Text(
-                            strength,
-                            style: const TextStyle(fontSize: 14, height: 1.4),
-                          ),
+              ...result.strengths.map(
+                (strength) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '✓ ',
+                        style: TextStyle(color: Colors.green, fontSize: 16),
+                      ),
+                      Expanded(
+                        child: Text(
+                          strength,
+                          style: const TextStyle(fontSize: 14, height: 1.4),
                         ),
-                      ],
-                    ),
-                  )),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 20),
-              
+
               // Areas for Improvement
               Row(
                 children: [
@@ -1001,29 +1026,31 @@ Be honest and constructive. The scores should add up to the overallScore.
                   const SizedBox(width: 8),
                   const Text(
                     'Areas for Improvement',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              ...result.improvements.map((improvement) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('• ', style: TextStyle(color: Colors.orange, fontSize: 16)),
-                        Expanded(
-                          child: Text(
-                            improvement,
-                            style: const TextStyle(fontSize: 14, height: 1.4),
-                          ),
+              ...result.improvements.map(
+                (improvement) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '• ',
+                        style: TextStyle(color: Colors.orange, fontSize: 16),
+                      ),
+                      Expanded(
+                        child: Text(
+                          improvement,
+                          style: const TextStyle(fontSize: 14, height: 1.4),
                         ),
-                      ],
-                    ),
-                  )),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1055,20 +1082,14 @@ Be honest and constructive. The scores should add up to the overallScore.
                   const SizedBox(width: 8),
                   const Text(
                     'Study Recommendation',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
               Text(
                 result.studyRecommendation,
-                style: const TextStyle(
-                  fontSize: 14,
-                  height: 1.5,
-                ),
+                style: const TextStyle(fontSize: 14, height: 1.5),
               ),
             ],
           ),
@@ -1099,11 +1120,56 @@ Be honest and constructive. The scores should add up to the overallScore.
   }
 
   String _getScoreMessage(double score) {
-    if (score >= 85) return 'Excellent study material! Well-prepared for exams.';
-    if (score >= 70) return 'Good notes! Some improvements could make them better.';
-    if (score >= 55) return 'Decent material, but consider supplementing with other resources.';
-    if (score >= 40) return 'Needs improvement. Consider creating more comprehensive notes.';
+    if (score >= 85)
+      return 'Excellent study material! Well-prepared for exams.';
+    if (score >= 70)
+      return 'Good notes! Some improvements could make them better.';
+    if (score >= 55)
+      return 'Decent material, but consider supplementing with other resources.';
+    if (score >= 40)
+      return 'Needs improvement. Consider creating more comprehensive notes.';
     return 'These notes need significant work. Seek additional study materials.';
+  }
+
+  Future<void> _importToLibrary() async {
+    if (_pdfBytes == null) return;
+    final client = Supabase.instance.client;
+    final bucket = 'documents';
+    final fileName = (_fileName == null || _fileName!.isEmpty)
+        ? 'document_${DateTime.now().millisecondsSinceEpoch}.pdf'
+        : _fileName!;
+    final storagePath =
+        'uploads/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+    try {
+      await client.storage
+          .from(bucket)
+          .uploadBinary(
+            storagePath,
+            Uint8List.fromList(_pdfBytes!),
+            fileOptions: const FileOptions(
+              contentType: 'application/pdf',
+              upsert: false,
+            ),
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Imported to Library: $fileName')));
+      if (!mounted) return;
+      Navigator.of(context).pop({
+        'fileName': fileName,
+        'storagePath': storagePath,
+        'benchmark': (_result?.overallScore ?? 0).round(),
+        'context': _contextController.text.trim(),
+      }); // return to dashboard with data
+    } catch (e) {
+      if (!mounted) return;
+      ErrorHandler.showError(
+        context,
+        'Import failed',
+        details: ErrorHandler.formatErrorMessage(e),
+      );
+    }
   }
 }
 
@@ -1136,7 +1202,7 @@ class BenchmarkResult {
       debugPrint('Parsing BenchmarkResult from JSON...');
       debugPrint('JSON keys present: ${json.keys.toList()}');
     }
-    
+
     try {
       final result = BenchmarkResult(
         overallScore: (json['overallScore'] as num).toDouble(),
@@ -1144,19 +1210,21 @@ class BenchmarkResult {
         clarity: CategoryScore.fromJson(json['clarity']),
         examReadiness: CategoryScore.fromJson(json['examReadiness']),
         depthBalance: CategoryScore.fromJson(json['depthBalance']),
-        practicalApplication: CategoryScore.fromJson(json['practicalApplication']),
+        practicalApplication: CategoryScore.fromJson(
+          json['practicalApplication'],
+        ),
         strengths: (json['strengths'] as List).cast<String>(),
         improvements: (json['improvements'] as List).cast<String>(),
         studyRecommendation: json['studyRecommendation'] as String,
       );
-      
+
       if (kDebugMode) {
         debugPrint('✓ BenchmarkResult parsed successfully');
         debugPrint('  Overall score: ${result.overallScore}');
         debugPrint('  Strengths: ${result.strengths.length}');
         debugPrint('  Improvements: ${result.improvements.length}');
       }
-      
+
       return result;
     } catch (e, stackTrace) {
       if (kDebugMode) {
@@ -1178,9 +1246,11 @@ class CategoryScore {
 
   factory CategoryScore.fromJson(Map<String, dynamic> json) {
     if (kDebugMode) {
-      debugPrint('  Parsing CategoryScore: score=${json['score']}, feedback length=${(json['feedback'] as String).length}');
+      debugPrint(
+        '  Parsing CategoryScore: score=${json['score']}, feedback length=${(json['feedback'] as String).length}',
+      );
     }
-    
+
     try {
       return CategoryScore(
         score: (json['score'] as num).toDouble(),
@@ -1195,4 +1265,3 @@ class CategoryScore {
     }
   }
 }
-

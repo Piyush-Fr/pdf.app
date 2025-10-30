@@ -63,10 +63,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               children: [
                 Icon(icon, color: Colors.white, size: 20),
                 const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(color: Colors.white),
-                ),
+                Text(label, style: const TextStyle(color: Colors.white)),
               ],
             ),
           ),
@@ -87,7 +84,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           try {
             final thumb = await _generatePdfThumbnail(pdfBytes);
             if (!mounted) return;
-            await client.storage.from(_bucketName).uploadBinary(
+            await client.storage
+                .from(_bucketName)
+                .uploadBinary(
                   storagePath,
                   pdfBytes,
                   fileOptions: const FileOptions(
@@ -134,7 +133,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _loadExistingFromSupabase() async {
     try {
       final client = Supabase.instance.client;
-      
+
       // Add timeout to prevent hanging
       final items = await client.storage
           .from(_bucketName)
@@ -143,15 +142,15 @@ class _DashboardScreenState extends State<DashboardScreen>
             const Duration(seconds: 30),
             onTimeout: () => throw TimeoutException('Loading files timed out'),
           );
-      
+
       // Sort newest first
       items.sort((a, b) => (b.createdAt ?? '').compareTo(a.createdAt ?? ''));
       final List<_PdfCard> fetched = [];
-      
+
       for (final obj in items) {
         final name = obj.name;
         if (name.isEmpty) continue; // Skip empty names
-        
+
         final path = 'uploads/$name';
         Uint8List? thumb;
         try {
@@ -164,18 +163,19 @@ class _DashboardScreenState extends State<DashboardScreen>
           debugPrint('Failed to load thumbnail for $name: $e');
           thumb = null;
         }
-        
+
         fetched.add(
           _PdfCard(
             title: name,
             benchmark: 72,
-            context: '', // Fix: pass empty string for context when loading legacy PDFs
+            context:
+                '', // Fix: pass empty string for context when loading legacy PDFs
             previewBytes: thumb,
             storagePath: path,
           ),
         );
       }
-      
+
       if (mounted) {
         setState(() {
           _cards
@@ -226,62 +226,100 @@ class _DashboardScreenState extends State<DashboardScreen>
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 child: Row(
                   children: [
-                    // Benchmark button
-                    _buildActionButton(
-                      icon: Icons.analytics,
-                      label: 'Benchmark',
-                      onTap: () => Navigator.of(context).pushNamed('/benchmark'),
-                    ),
-                    // Quiz button
-                    _buildActionButton(
-                      icon: Icons.quiz,
-                      label: 'Quiz',
-                      onTap: () => Navigator.of(context).pushNamed('/quizSetup'),
-                    ),
-                    // Summarizer button
-                    _buildActionButton(
-                      icon: Icons.summarize,
-                      label: 'Summarize',
-                      onTap: () => Navigator.of(context).pushNamed('/summarizer'),
-                    ),
-                    // Flow State button
-                    _buildActionButton(
-                      icon: Icons.account_tree,
-                      label: 'Flow',
-                      onTap: () => Navigator.of(context).pushNamed('/flow'),
-                    ),
-                    // Import PDF button
+                    // Benchmark button (Glassmorphism)
                     Padding(
-                      padding: const EdgeInsets.only(right: 4),
+                      padding: const EdgeInsets.only(right: 8),
                       child: GestureDetector(
-                        onTap: _showImportDialog,
-                        child: OCLiquidGlassGroup(
-                          settings: const OCLiquidGlassSettings(
-                            refractStrength: -0.06,
-                            blurRadiusPx: 3.0,
-                            specStrength: 1.0,
-                            lightbandColor: Colors.white,
-                          ),
-                          child: OCLiquidGlass(
-                            width: 110,
-                            height: 40,
-                            borderRadius: 12,
-                            color: Colors.white.withAlpha((0.10 * 255).round()),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
-                                Icon(Icons.add, color: Colors.white, size: 20),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Import',
-                                  style: TextStyle(color: Colors.white, fontSize: 14),
+                        onTap: () async {
+                          final res = await Navigator.of(
+                            context,
+                          ).pushNamed('/benchmark');
+                          if (!mounted) return;
+                          if (res is Map) {
+                            try {
+                              final fileName = res['fileName'] as String?;
+                              final storagePath = res['storagePath'] as String?;
+                              final benchmark = res['benchmark'] as int? ?? 0;
+                              final ctx = res['context'] as String? ?? '';
+                              if (fileName != null && storagePath != null) {
+                                Uint8List? thumb;
+                                try {
+                                  final data = await Supabase
+                                      .instance
+                                      .client
+                                      .storage
+                                      .from(_bucketName)
+                                      .download(storagePath)
+                                      .timeout(const Duration(seconds: 10));
+                                  thumb = await _generatePdfThumbnail(data);
+                                } catch (_) {
+                                  thumb = null;
+                                }
+                                setState(() {
+                                  _cards.insert(
+                                    0,
+                                    _PdfCard(
+                                      title: fileName,
+                                      benchmark: benchmark,
+                                      context: ctx,
+                                      previewBytes: thumb,
+                                      storagePath: storagePath,
+                                    ),
+                                  );
+                                });
+                              }
+                            } catch (_) {}
+                          }
+                        },
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: BackdropFilter(
+                            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                            child: Container(
+                              width: 130,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Colors.white.withAlpha(
+                                      (0.16 * 255).round(),
+                                    ),
+                                    Colors.white.withAlpha(
+                                      (0.08 * 255).round(),
+                                    ),
+                                  ],
                                 ),
-                              ],
+                                border: Border.all(
+                                  color: Colors.white.withAlpha(
+                                    (0.18 * 255).round(),
+                                  ),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: const [
+                                  Icon(
+                                    Icons.analytics,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Benchmark',
+                                    style: TextStyle(color: Colors.white),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
+                    // Import PDF button removed earlier
                   ],
                 ),
               ),
@@ -321,7 +359,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                             .from(_bucketName)
                             .download(card.storagePath);
                         if (!mounted) return;
-                        final navigator = Navigator.of(context); // ignore: use_build_context_synchronously
+                        final navigator = Navigator.of(
+                          context,
+                        ); // ignore: use_build_context_synchronously
                         navigator.pushNamed(
                           '/study',
                           arguments: {
@@ -332,7 +372,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                         );
                       } catch (e) {
                         if (!mounted) return;
-                        final messenger = ScaffoldMessenger.of(context); // ignore: use_build_context_synchronously
+                        final messenger = ScaffoldMessenger.of(
+                          context,
+                        ); // ignore: use_build_context_synchronously
                         messenger.showSnackBar(
                           SnackBar(content: Text('Open failed: $e')),
                         );
@@ -519,9 +561,9 @@ class _PdfCard {
 /// Simple dialog for importing PDF files to the dashboard
 class _ImportDialog extends StatefulWidget {
   final Function(String fileName, Uint8List pdfBytes) onImported;
-  
+
   const _ImportDialog({required this.onImported});
-  
+
   @override
   State<_ImportDialog> createState() => _ImportDialogState();
 }
@@ -539,21 +581,21 @@ class _ImportDialogState extends State<_ImportDialog> {
         allowedExtensions: const ['pdf'],
         withData: true,
       );
-      
+
       if (result == null || result.files.isEmpty) return;
-      
+
       final picked = result.files.first;
-      
+
       if (picked.bytes == null) {
         setState(() => _errorMsg = 'Failed to read file data');
         return;
       }
-      
+
       if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
         setState(() => _errorMsg = 'File size must not exceed 50MB');
         return;
       }
-      
+
       setState(() {
         _fileName = picked.name;
         _pdfBytes = picked.bytes;
@@ -561,7 +603,8 @@ class _ImportDialogState extends State<_ImportDialog> {
       });
     } catch (e) {
       setState(() {
-        _errorMsg = 'Failed to select file: ${ErrorHandler.formatErrorMessage(e)}';
+        _errorMsg =
+            'Failed to select file: ${ErrorHandler.formatErrorMessage(e)}';
       });
     }
   }
@@ -589,7 +632,11 @@ class _ImportDialogState extends State<_ImportDialog> {
             else
               Column(
                 children: [
-                  const Icon(Icons.picture_as_pdf, size: 48, color: Colors.green),
+                  const Icon(
+                    Icons.picture_as_pdf,
+                    size: 48,
+                    color: Colors.green,
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     _fileName ?? 'Unknown file',

@@ -38,20 +38,20 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
         minLength: 3,
         maxLength: 500,
       );
-      
+
       if (validation != null) {
         throw Exception(validation);
       }
-      
+
       final uri = Uri.parse(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
       );
       final prompt =
           'Analyze the attached PDF and produce a concise flow diagram for the requested context.\n'
-              'OUTPUT FORMAT (STRICT): Provide ONLY a JSON object wrapped in <json>...</json> tags, no commentary.\n'
-              '{"nodes": [{"id": string, "label": string}], "edges": [{"from": string, "to": string}]}\n'
-              'Rules: 6–12 nodes, labels <= 5 words.\n'
-              'Context: $contextText';
+          'OUTPUT FORMAT (STRICT): Provide ONLY a JSON object wrapped in <json>...</json> tags, no commentary.\n'
+          '{"nodes": [{"id": string, "label": string}], "edges": [{"from": string, "to": string}]}\n'
+          'Rules: 6–12 nodes, labels <= 5 words.\n'
+          'Context: $contextText';
       final body = {
         'system_instruction': {
           'role': 'system',
@@ -82,7 +82,7 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
           'response_mime_type': 'text/plain',
         },
       };
-      
+
       // Add timeout
       final resp = await http
           .post(
@@ -92,9 +92,10 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
           )
           .timeout(
             const Duration(seconds: 90),
-            onTimeout: () => throw TimeoutException('Flow generation timed out'),
+            onTimeout: () =>
+                throw TimeoutException('Flow generation timed out'),
           );
-          
+
       if (resp.statusCode != 200) {
         throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
       }
@@ -143,7 +144,7 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
     );
     final prompt =
         'Read the attached PDF and output a single line that describes the main flow using arrows, like: A -> B -> C -> D. '
-            'No commentary, no code fences, just that one line. Context: $contextText';
+        'No commentary, no code fences, just that one line. Context: $contextText';
     final body = {
       'contents': [
         {
@@ -222,8 +223,8 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
     );
     final prompt =
         'From the attached PDF, list 6-12 key steps as a simple bullet list.\n'
-            'One step per line, no numbering, no commentary. Keep each step <= 6 words.\n'
-            'Context: $contextText';
+        'One step per line, no numbering, no commentary. Keep each step <= 6 words.\n'
+        'Context: $contextText';
     final body = {
       'contents': [
         {
@@ -436,10 +437,10 @@ class _FlowStateScreenState extends State<FlowStateScreen> {
     );
     final prompt =
         'Create a clear ASCII flowchart for the attached PDF and context below.\n'
-            'Use ONLY plain ASCII characters: +-|/\\, arrows like ->, labels, and boxes.\n'
-            'Keep width <= 70 chars; multiline boxes allowed; include simple branching labels (Yes/No) if relevant.\n'
-            'No code fences, no commentary. Output the flowchart only.\n'
-            'Context: $contextText';
+        'Use ONLY plain ASCII characters: +-|/\\, arrows like ->, labels, and boxes.\n'
+        'Keep width <= 70 chars; multiline boxes allowed; include simple branching labels (Yes/No) if relevant.\n'
+        'No code fences, no commentary. Output the flowchart only.\n'
+        'Context: $contextText';
     final body = {
       'contents': [
         {

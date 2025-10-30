@@ -68,7 +68,7 @@ flutter:
   # Assets included in the application. List directories or individual files.
   assets:
     - assets/
-    - .env
+    - assets/app.env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

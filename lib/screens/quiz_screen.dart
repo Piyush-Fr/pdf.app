@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:oc_liquid_glass/oc_liquid_glass.dart';
+import 'dart:ui' as ui;
 
 class QuizScreen extends StatefulWidget {
   const QuizScreen({super.key, required this.quiz});
@@ -43,7 +43,7 @@ class _QuizScreenState extends State<QuizScreen> {
                   ),
                   const Spacer(),
                   if (_submitted)
-                      Container(
+                    Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 6,
@@ -66,59 +66,78 @@ class _QuizScreenState extends State<QuizScreen> {
                     final opts = (q['options'] as List).cast<String>();
                     final selected = _answers[index];
                     final correct = (q['correctIndex'] as num?)?.toInt();
-                    return OCLiquidGlassGroup(
-                      settings: const OCLiquidGlassSettings(
-                        refractStrength: -0.08,
-                        blurRadiusPx: 3.5,
-                        specStrength: 1.1,
-                        lightbandColor: Colors.white,
-                      ),
-                      child: OCLiquidGlass(
-                        width: double.infinity,
-                        height: null,
-                        borderRadius: 14,
-                        color: Colors.white.withAlpha((0.10 * 255).round()),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Q${index + 1}. ${q['question']}',
-                                style: Theme.of(context).textTheme.titleMedium,
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Colors.white.withAlpha((0.16 * 255).round()),
+                                Colors.white.withAlpha((0.06 * 255).round()),
+                              ],
+                            ),
+                            border: Border.all(
+                              color: Colors.white.withAlpha(
+                                (0.18 * 255).round(),
                               ),
-                              const SizedBox(height: 8),
-                              RadioGroup<int?>(
-                                groupValue: selected,
-                                onChanged: (v) {
-                                  if (!_submitted && v != null) {
-                                    setState(() => _answers[index] = v);
-                                  }
-                                },
-                                child: Column(
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Q${index + 1}. ${q['question']}',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 8),
+                                Column(
                                   children: [
                                     for (var i = 0; i < opts.length; i++)
-                                      ListTile(
-                                        leading: Radio<int>(value: i),
+                                      RadioListTile<int>(
+                                        value: i,
+                                        groupValue: selected,
+                                        onChanged: _submitted
+                                            ? null
+                                            : (v) => setState(
+                                                () => _answers[index] = v,
+                                              ),
                                         title: Text(opts[i]),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
                                         ),
                                         tileColor: _submitted
                                             ? (i == correct
-                                                  ? Colors.green.withAlpha((0.15 * 255).round())
+                                                  ? Colors.green.withAlpha(
+                                                      (0.15 * 255).round(),
+                                                    )
                                                   : (selected == i
-                                                        ? Colors.red.withAlpha((0.15 * 255).round())
+                                                        ? Colors.red.withAlpha(
+                                                            (0.15 * 255)
+                                                                .round(),
+                                                          )
                                                         : null))
                                             : null,
-                                        onTap: _submitted
-                                            ? null
-                                            : () => setState(() => _answers[index] = i),
+                                        controlAffinity:
+                                            ListTileControlAffinity.leading,
+                                        activeColor: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
                                       ),
                                   ],
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),

@@ -37,16 +37,16 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       );
       if (result == null || result.files.isEmpty) return;
       final picked = result.files.first;
-      
+
       if (picked.bytes == null) {
         throw Exception('Failed to read selected file');
       }
-      
+
       // Validate file size (50MB max)
       if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
         throw Exception('File size must not exceed 50MB');
       }
-      
+
       setState(() {
         _fileName = picked.name;
         _pdfBytes = picked.bytes;
@@ -117,10 +117,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
       ],
     };
 
-    final resp = await _postGeminiWithRetry(
-      uri,
-      body,
-    );
+    final resp = await _postGeminiWithRetry(uri, body);
 
     if (kDebugMode) {
       debugPrint('Raw Gemini quiz API response: ${resp.body}');
@@ -133,7 +130,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     if (kDebugMode) {
       try {
         final cands = data['candidates'] as List?;
-        final first = (cands != null && cands.isNotEmpty) ? cands.first as Map<String, dynamic> : null;
+        final first = (cands != null && cands.isNotEmpty)
+            ? cands.first as Map<String, dynamic>
+            : null;
         final finishReason = first != null ? first['finishReason'] : null;
         debugPrint('Quiz finishReason: $finishReason');
       } catch (_) {}
@@ -145,9 +144,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     // Concatenate any text parts if model returns multiple parts
     final parts =
         (candidates.first['content']?['parts'] as List?)
-                ?.whereType<Map>()
-                .toList() ??
-            [];
+            ?.whereType<Map>()
+            .toList() ??
+        [];
     final buffer = StringBuffer();
     for (final p in parts) {
       final t = p['text'];
@@ -184,7 +183,10 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     }
   }
 
-  Future<String?> _retryContextOnly(String contextText, {bool prevFail = false}) async {
+  Future<String?> _retryContextOnly(
+    String contextText, {
+    bool prevFail = false,
+  }) async {
     final uri = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${AppConfig.geminiApiKey}',
     );
@@ -224,10 +226,7 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         },
       ],
     };
-    final resp = await _postGeminiWithRetry(
-      uri,
-      body,
-    );
+    final resp = await _postGeminiWithRetry(uri, body);
     if (kDebugMode) {
       debugPrint('Raw Gemini retry response: ${resp.body}');
     }
@@ -237,9 +236,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     if (candidates == null || candidates.isEmpty) return null;
     final parts =
         (candidates.first['content']?['parts'] as List?)
-                ?.whereType<Map>()
-                .toList() ??
-            [];
+            ?.whereType<Map>()
+            .toList() ??
+        [];
     final buffer = StringBuffer();
     for (final p in parts) {
       final t = p['text'];
@@ -248,7 +247,10 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
     return buffer.toString();
   }
 
-  Future<http.Response> _postGeminiWithRetry(Uri uri, Map<String, dynamic> body) async {
+  Future<http.Response> _postGeminiWithRetry(
+    Uri uri,
+    Map<String, dynamic> body,
+  ) async {
     const int maxAttempts = 3;
     int attempt = 0;
     Duration delay = const Duration(seconds: 1);
@@ -280,7 +282,9 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
         if (!overloaded) return resp;
         lastResp = resp;
         if (kDebugMode) {
-          debugPrint('Gemini overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...');
+          debugPrint(
+            'Gemini overloaded (attempt $attempt/$maxAttempts). Retrying in ${delay.inSeconds}s...',
+          );
         }
       } catch (e) {
         // Network or transient error, retry
@@ -412,12 +416,13 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                          Expanded(
+                      Expanded(
                         child: FilledButton.icon(
                           onPressed: (!_loading && _pdfBytes != null)
                               ? () async {
                                   // Validate context input
-                                  final contextText = _contextController.text.trim();
+                                  final contextText = _contextController.text
+                                      .trim();
                                   final validation = ErrorHandler.validateInput(
                                     contextText,
                                     fieldName: 'Context',
@@ -425,12 +430,12 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
                                     maxLength: 1000,
                                     required: false,
                                   );
-                                  
+
                                   if (validation != null) {
                                     ErrorHandler.showError(context, validation);
                                     return;
                                   }
-                                  
+
                                   setState(() => _loading = true);
                                   try {
                                     final quiz = await _generateQuiz(
@@ -440,20 +445,26 @@ class _QuizSetupScreenState extends State<QuizSetupScreen> {
                                     if (!mounted) return;
                                     // ignore: use_build_context_synchronously
                                     final navigator = Navigator.of(context);
-                                    navigator.pushNamed('/quiz', arguments: quiz);
+                                    navigator.pushNamed(
+                                      '/quiz',
+                                      arguments: quiz,
+                                    );
                                   } on TimeoutException {
                                     if (!mounted) return;
                                     ErrorHandler.showError(
                                       context, // ignore: use_build_context_synchronously
                                       'Quiz generation timed out',
-                                      details: 'The request took too long. Please try again.',
+                                      details:
+                                          'The request took too long. Please try again.',
                                     );
                                   } catch (e) {
                                     if (!mounted) return;
                                     ErrorHandler.showError(
                                       context, // ignore: use_build_context_synchronously
                                       'Quiz generation failed',
-                                      details: ErrorHandler.formatErrorMessage(e),
+                                      details: ErrorHandler.formatErrorMessage(
+                                        e,
+                                      ),
                                     );
                                   } finally {
                                     if (mounted) {

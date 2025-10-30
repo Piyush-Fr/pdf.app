@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'config/app_config.dart';
 import 'screens/dashboard.dart';
 import 'screens/study.dart';
 import 'screens/login.dart';
@@ -11,42 +10,44 @@ import 'screens/quiz_setup.dart';
 import 'screens/quiz_screen.dart';
 import 'screens/pdf_reader.dart';
 import 'screens/flow_state.dart';
-import 'screens/benchmark_screen.dart';
 import 'widgets/liquid_cursor_overlay.dart';
+import 'config/app_config.dart';
+import 'screens/benchmark_screen.dart';
 
 Future<void> main() async {
-  // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Load environment variables from .env file
+  String? initError;
   try {
     await AppConfig.load();
-    debugPrint('✓ Environment variables loaded successfully');
+    final supabaseUrl = AppConfig.supabaseUrl;
+    final supabaseAnonKey = AppConfig.supabaseAnonKey;
+    if (supabaseUrl.isEmpty || supabaseAnonKey.isEmpty) {
+      initError = 'Missing SUPABASE_URL or SUPABASE_ANON_KEY in env.';
+    } else {
+      await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+    }
   } catch (e) {
-    debugPrint('✗ Failed to load environment variables: $e');
-    debugPrint('Please ensure .env file exists (copy from .env.example)');
-    // Continue anyway - will show error when trying to use missing keys
+    initError = 'Supabase init failed: $e';
   }
-  
-  // Initialize Supabase with error handling
-  try {
-    await Supabase.initialize(
-      url: AppConfig.supabaseUrl,
-      anonKey: AppConfig.supabaseAnonKey,
+  if (initError != null) {
+    runApp(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Startup error: $initError\n\nAdd env in assets/app.env and run again.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
-    debugPrint('✓ Supabase initialized successfully');
-  } catch (e) {
-    // Log error and continue - the app will show login screen
-    debugPrint('✗ Supabase initialization error: $e');
+    return;
   }
-  
-  // Set up global error handler for uncaught errors
-  FlutterError.onError = (FlutterErrorDetails details) {
-    FlutterError.presentError(details);
-    debugPrint('Flutter error: ${details.exception}');
-    debugPrint('Stack trace: ${details.stack}');
-  };
-  
   runApp(const MyApp());
 }
 
@@ -62,10 +63,7 @@ class MyApp extends StatelessWidget {
 
   ThemeData _buildTheme() {
     return ThemeData.dark(useMaterial3: true).copyWith(
-      colorScheme: ColorScheme.dark(
-        primary: accent,
-        secondary: accent,
-      ),
+      colorScheme: ColorScheme.dark(primary: accent, secondary: accent),
       scaffoldBackgroundColor: const Color(0xFF0A0E12),
       splashColor: accent.withAlpha((0.15 * 255).round()),
       highlightColor: Colors.transparent,
@@ -95,7 +93,11 @@ class MyApp extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red,
+                      ),
                       const SizedBox(height: 16),
                       const Text('Invalid quiz data'),
                       const SizedBox(height: 16),
@@ -115,7 +117,7 @@ class MyApp extends StatelessWidget {
           final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
           final bytes = args?['pdfBytes'] as Uint8List?;
           final name = args?['pdfFilename'] as String?;
-          
+
           if (bytes == null) {
             return _LiquidBackplate(
               child: Scaffold(
@@ -123,7 +125,11 @@ class MyApp extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red,
+                      ),
                       const SizedBox(height: 16),
                       const Text('PDF data is missing'),
                       const SizedBox(height: 16),
@@ -137,19 +143,17 @@ class MyApp extends StatelessWidget {
               ),
             );
           }
-          
+
           return _LiquidBackplate(
             child: FlowStateScreen(pdfBytes: bytes, filename: name),
           );
         },
-        '/benchmark': (ctx) => _LiquidBackplate(
-          child: const BenchmarkScreen(),
-        ),
+        '/benchmark': (ctx) => _LiquidBackplate(child: const BenchmarkScreen()),
         '/pdf': (ctx) {
           final args = ModalRoute.of(ctx)?.settings.arguments as Map?;
           final bytes = args?['pdfBytes'] as Uint8List?;
           final name = args?['pdfFilename'] as String?;
-          
+
           if (bytes == null) {
             return _LiquidBackplate(
               child: Scaffold(
@@ -157,7 +161,11 @@ class MyApp extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red,
+                      ),
                       const SizedBox(height: 16),
                       const Text('PDF data is missing'),
                       const SizedBox(height: 16),
@@ -171,7 +179,7 @@ class MyApp extends StatelessWidget {
               ),
             );
           }
-          
+
           return _LiquidBackplate(
             child: PdfReaderScreen(bytes: bytes, filename: name),
           );
@@ -331,7 +339,8 @@ class _GrainPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
-    final light = Paint()..color = Colors.white.withAlpha((0.035 * 255).round());
+    final light = Paint()
+      ..color = Colors.white.withAlpha((0.035 * 255).round());
     final dark = Paint()..color = Colors.black.withAlpha((0.025 * 255).round());
     for (var i = 0; i < points.length; i++) {
       final p = points[i];
