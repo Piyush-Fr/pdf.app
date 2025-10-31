@@ -103,13 +103,17 @@ class _QuizScreenState extends State<QuizScreen> {
                                   children: [
                                     for (var i = 0; i < opts.length; i++)
                                       RadioListTile<int>(
-                                        value: i,
+                                        // ignore: deprecated_member_use
                                         groupValue: selected,
+                                        value: i,
+                                        // ignore: deprecated_member_use
                                         onChanged: _submitted
                                             ? null
-                                            : (v) => setState(
-                                                () => _answers[index] = v,
-                                              ),
+                                            : (int? v) {
+                                                setState(() {
+                                                  _answers[index] = v;
+                                                });
+                                              },
                                         title: Text(opts[i]),
                                         shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(

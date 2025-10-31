@@ -9,7 +9,6 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import '../utils/error_handler.dart';
 import '../config/app_config.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'dart:typed_data';
 
 class BenchmarkScreen extends StatefulWidget {
   const BenchmarkScreen({super.key});
@@ -93,7 +92,9 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       if (kDebugMode) {
         debugPrint('❌ PDF selection error: $e');
       }
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ErrorHandler.showError(
         context,
         'PDF selection failed',
@@ -157,7 +158,9 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
 
       final result = await _analyzePdfWithGemini(_pdfBytes!, contextText);
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (kDebugMode) {
         debugPrint('✓ Analysis complete, updating UI');
@@ -174,7 +177,9 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
       if (kDebugMode) {
         debugPrint('❌ TIMEOUT EXCEPTION: $e');
       }
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ErrorHandler.showError(
         context, // ignore: use_build_context_synchronously
         'Benchmark analysis timed out',
@@ -187,7 +192,9 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
         debugPrint('Stack trace:');
         debugPrint(stackTrace.toString());
       }
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ErrorHandler.showError(
         context, // ignore: use_build_context_synchronously
         'Benchmark analysis failed',
@@ -225,19 +232,24 @@ class _BenchmarkScreenState extends State<BenchmarkScreen> {
 
     final prompt =
         '''
-You are an expert educational content evaluator. Analyze the attached PDF study material in the context of: "$contextText"
+You are an expert educational content evaluator. Analyze the attached PDF study material for relevance and quality in the context of the student's exam: "$contextText"
 
-Rate the material from a student's perspective who has ONE WEEK before their exam. Use this scoring criteria:
+CRITICAL: First, determine if the PDF content is RELEVANT to the exam context "$contextText". If the material is NOT relevant (e.g., a DAA textbook when the exam is for Hindi), you MUST score accordingly:
+- If the material has NO relevance to the context: Content Coverage = 0-5 points, Overall Score should reflect this major mismatch (typically 15-35/100)
+- If the material has PARTIAL relevance: Adjust scores proportionally (Content Coverage = 5-15 points)
+- If the material is FULLY relevant: Score normally using the criteria below
 
-1. **Content Coverage (25 points)**: How comprehensive is the material? Does it cover key topics, definitions, formulas, and concepts needed for the exam?
+Rate the material from a student's perspective who has ONE WEEK before their exam on "$contextText". Use this scoring criteria:
+
+1. **Content Coverage (25 points)**: How comprehensive is the material FOR THE EXAM CONTEXT "$contextText"? Does it cover the key topics, definitions, formulas, and concepts needed for THIS SPECIFIC EXAM? If the material doesn't match the exam context, this score MUST be low (0-10 points). Only give high scores (15-25) if the material directly covers topics relevant to "$contextText".
 
 2. **Clarity & Organization (20 points)**: Is the content well-structured, easy to follow, and clearly explained? Are there headings, bullet points, diagrams, or visual aids?
 
-3. **Exam Readiness (25 points)**: Does it include practice problems, examples, summaries, or key takeaways? Is it conducive to quick revision?
+3. **Exam Readiness (25 points)**: Does it include practice problems, examples, summaries, or key takeaways RELEVANT TO "$contextText"? Is it conducive to quick revision for this specific exam?
 
-4. **Depth vs. Brevity Balance (15 points)**: Is the content detailed enough without being overwhelming for a week of study? Does it prioritize important concepts?
+4. **Depth vs. Brevity Balance (15 points)**: Is the content detailed enough without being overwhelming for a week of study? Does it prioritize important concepts RELEVANT TO "$contextText"?
 
-5. **Practical Application (15 points)**: Are there real-world examples, case studies, or application scenarios that aid understanding?
+5. **Practical Application (15 points)**: Are there real-world examples, case studies, or application scenarios RELEVANT TO "$contextText" that aid understanding?
 
 Return ONLY a JSON object in this exact format (no markdown, no code fences):
 {
@@ -264,10 +276,10 @@ Return ONLY a JSON object in this exact format (no markdown, no code fences):
   },
   "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
   "improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"],
-  "studyRecommendation": "<1-2 sentence recommendation for the student>"
+  "studyRecommendation": "<1-2 sentence recommendation SPECIFICALLY for the exam context '$contextText'. If the material is not relevant, clearly state that this material is NOT suitable for the '$contextText' exam and recommend finding appropriate study material.>"
 }
 
-Be honest and constructive. The scores should add up to the overallScore.
+Be honest and constructive. The scores should add up to the overallScore. ALWAYS consider the relevance of the material to the exam context "$contextText" when scoring.
 ''';
 
     final body = {
@@ -276,7 +288,7 @@ Be honest and constructive. The scores should add up to the overallScore.
         'parts': [
           {
             'text':
-                'You are an educational content evaluator. Return ONLY valid JSON, no commentary, no markdown.',
+                'You are an educational content evaluator. You MUST evaluate material relevance to the exam context FIRST. If material doesn\'t match the context, score it low. Return ONLY valid JSON, no commentary, no markdown.',
           },
         ],
       },
@@ -1120,19 +1132,25 @@ Be honest and constructive. The scores should add up to the overallScore.
   }
 
   String _getScoreMessage(double score) {
-    if (score >= 85)
+    if (score >= 85) {
       return 'Excellent study material! Well-prepared for exams.';
-    if (score >= 70)
+    }
+    if (score >= 70) {
       return 'Good notes! Some improvements could make them better.';
-    if (score >= 55)
+    }
+    if (score >= 55) {
       return 'Decent material, but consider supplementing with other resources.';
-    if (score >= 40)
+    }
+    if (score >= 40) {
       return 'Needs improvement. Consider creating more comprehensive notes.';
+    }
     return 'These notes need significant work. Seek additional study materials.';
   }
 
   Future<void> _importToLibrary() async {
-    if (_pdfBytes == null) return;
+    if (_pdfBytes == null) {
+      return;
+    }
     final client = Supabase.instance.client;
     final bucket = 'documents';
     final fileName = (_fileName == null || _fileName!.isEmpty)
@@ -1151,11 +1169,15 @@ Be honest and constructive. The scores should add up to the overallScore.
               upsert: false,
             ),
           );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Imported to Library: $fileName')));
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       Navigator.of(context).pop({
         'fileName': fileName,
         'storagePath': storagePath,
@@ -1163,7 +1185,9 @@ Be honest and constructive. The scores should add up to the overallScore.
         'context': _contextController.text.trim(),
       }); // return to dashboard with data
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ErrorHandler.showError(
         context,
         'Import failed',

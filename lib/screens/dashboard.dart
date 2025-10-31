@@ -2,10 +2,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pdfx/pdfx.dart';
-import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import '../utils/error_handler.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -35,93 +33,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     } catch (_) {
       return null;
     }
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: onTap,
-        child: OCLiquidGlassGroup(
-          settings: const OCLiquidGlassSettings(
-            refractStrength: -0.06,
-            blurRadiusPx: 3.0,
-            specStrength: 1.0,
-            lightbandColor: Colors.white,
-          ),
-          child: OCLiquidGlass(
-            width: label.length > 6 ? 130 : 110,
-            height: 40,
-            borderRadius: 12,
-            color: Colors.white.withAlpha((0.10 * 255).round()),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Text(label, style: const TextStyle(color: Colors.white)),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showImportDialog() async {
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (dialogContext) => _ImportDialog(
-        onImported: (String fileName, Uint8List pdfBytes) async {
-          final client = Supabase.instance.client;
-          final storagePath =
-              'uploads/${DateTime.now().millisecondsSinceEpoch}_$fileName';
-          try {
-            final thumb = await _generatePdfThumbnail(pdfBytes);
-            if (!mounted) return;
-            await client.storage
-                .from(_bucketName)
-                .uploadBinary(
-                  storagePath,
-                  pdfBytes,
-                  fileOptions: const FileOptions(
-                    contentType: 'application/pdf',
-                    upsert: false,
-                  ),
-                );
-            if (!mounted) return;
-            setState(() {
-              _cards.insert(
-                0,
-                _PdfCard(
-                  title: fileName,
-                  benchmark: 0,
-                  context: 'No context',
-                  previewBytes: thumb,
-                  storagePath: storagePath,
-                ),
-              );
-            });
-            if (!mounted) return;
-            final messenger = ScaffoldMessenger.of(context);
-            messenger.showSnackBar(
-              SnackBar(content: Text('Uploaded: $fileName')),
-            );
-          } catch (e) {
-            if (!mounted) return;
-            final messenger = ScaffoldMessenger.of(context);
-            messenger.showSnackBar(
-              SnackBar(content: Text('Upload failed: $e')),
-            );
-          }
-        },
-      ),
-    );
   }
 
   @override
@@ -354,14 +265,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                     data: card,
                     isTop: isTop,
                     onTap: () async {
+                      final navigator = Navigator.of(context);
+                      final messenger = ScaffoldMessenger.of(context);
                       try {
                         final bytes = await Supabase.instance.client.storage
                             .from(_bucketName)
                             .download(card.storagePath);
-                        if (!mounted) return;
-                        final navigator = Navigator.of(
-                          context,
-                        ); // ignore: use_build_context_synchronously
+                        if (!context.mounted) return;
                         navigator.pushNamed(
                           '/study',
                           arguments: {
@@ -371,10 +281,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           },
                         );
                       } catch (e) {
-                        if (!mounted) return;
-                        final messenger = ScaffoldMessenger.of(
-                          context,
-                        ); // ignore: use_build_context_synchronously
+                        if (!context.mounted) return;
                         messenger.showSnackBar(
                           SnackBar(content: Text('Open failed: $e')),
                         );
@@ -556,132 +463,4 @@ class _PdfCard {
   final String context;
   final Uint8List? previewBytes;
   final String storagePath;
-}
-
-/// Simple dialog for importing PDF files to the dashboard
-class _ImportDialog extends StatefulWidget {
-  final Function(String fileName, Uint8List pdfBytes) onImported;
-
-  const _ImportDialog({required this.onImported});
-
-  @override
-  State<_ImportDialog> createState() => _ImportDialogState();
-}
-
-class _ImportDialogState extends State<_ImportDialog> {
-  Uint8List? _pdfBytes;
-  String? _fileName;
-  String? _errorMsg;
-  bool _uploading = false;
-
-  Future<void> _pickPdf() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['pdf'],
-        withData: true,
-      );
-
-      if (result == null || result.files.isEmpty) return;
-
-      final picked = result.files.first;
-
-      if (picked.bytes == null) {
-        setState(() => _errorMsg = 'Failed to read file data');
-        return;
-      }
-
-      if (!ErrorHandler.validateFileSize(picked.bytes!.length, maxMB: 50)) {
-        setState(() => _errorMsg = 'File size must not exceed 50MB');
-        return;
-      }
-
-      setState(() {
-        _fileName = picked.name;
-        _pdfBytes = picked.bytes;
-        _errorMsg = null;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMsg =
-            'Failed to select file: ${ErrorHandler.formatErrorMessage(e)}';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Import PDF'),
-      content: SizedBox(
-        width: 350,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Select a PDF file to upload to your library.',
-              style: TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 20),
-            if (_pdfBytes == null)
-              ElevatedButton.icon(
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Select PDF'),
-                onPressed: _uploading ? null : _pickPdf,
-              )
-            else
-              Column(
-                children: [
-                  const Icon(
-                    Icons.picture_as_pdf,
-                    size: 48,
-                    color: Colors.green,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _fileName ?? 'Unknown file',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${(_pdfBytes!.length / 1024).toStringAsFixed(1)} KB',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            if (_errorMsg != null) ...[
-              const SizedBox(height: 12),
-              Text(_errorMsg!, style: const TextStyle(color: Colors.red)),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _uploading ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        if (_pdfBytes != null)
-          ElevatedButton(
-            onPressed: _uploading
-                ? null
-                : () async {
-                    setState(() => _uploading = true);
-                    final navigator = Navigator.of(context);
-                    await widget.onImported(_fileName!, _pdfBytes!);
-                    if (!mounted) return;
-                    navigator.pop();
-                  },
-            child: _uploading
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Import'),
-          ),
-      ],
-    );
-  }
 }
